@@ -1,0 +1,38 @@
+experiment_dir: /work/outputs/with_temp/ace2s
+n_forward_steps: 1459
+forward_steps_in_memory: 50
+checkpoint_path: /work/repo/HiRO-ACE/ACE2S.ckpt
+n_ensemble_per_ic: 4
+
+logging:
+  log_to_screen: true
+  log_to_wandb: false
+  log_to_file: true
+  project: ace
+
+initial_condition:
+  path: /work/repo/HiRO-ACE/initial_conditions/ic_2023.nc
+  start_indices:
+    times:
+      - "2023-01-01T00:00:00"
+
+forcing_loader:
+  dataset:
+    data_path: /work/repo/HiRO-ACE/forcing_data
+  num_data_workers: 2
+
+data_writer:
+  files:
+  - format:
+      name: zarr
+    label: output_6hourly_ace2s
+    names:
+    - PRATEsfc
+    - UGRD10m
+    - VGRD10m
+    - TMP2m
+    - surface_temperature
+    separate_ensemble_members: true
+    save_reference: false
+  save_monthly_files: false
+  save_prediction_files: false

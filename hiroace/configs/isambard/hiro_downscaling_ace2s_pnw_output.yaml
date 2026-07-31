@@ -1,0 +1,37 @@
+experiment_dir: /work/outputs/run_1yr_ens4/hiro
+patch:
+  divide_generation: true
+  composite_prediction: true
+  coarse_horizontal_overlap: 1
+model:
+  checkpoint_path: /work/repo/HiRO-ACE/HiRO.ckpt
+  rename:
+    eastward_wind_at_ten_meters: UGRD10m
+    northward_wind_at_ten_meters: VGRD10m
+data:
+  coarse:
+  - data_path: /work/outputs/run_1yr_ens4/ace2s
+    engine: zarr
+    file_pattern: output_6hourly_ace2s_predictions_ic0001.zarr
+  batch_size: 1
+  num_data_workers: 2
+  strict_ensemble: false
+outputs:
+  # Full 1-year Japan downscaling (2023)
+  - name: "Japan_1yr_20230101_20231201_ic0001"
+    save_vars: ["PRATEsfc"]
+    n_ens: 3
+    max_samples_per_gpu: 8
+    time_range:
+      start_time: "2023-01-01T00:00:00"
+      stop_time: "2023-12-31T18:00:00"
+    lat_extent:
+      start: 30.0
+      stop: 46.0
+    lon_extent:
+      start: 129.5
+      stop: 145.5
+logging:
+  log_to_screen: true
+  log_to_wandb: false
+  log_to_file: true

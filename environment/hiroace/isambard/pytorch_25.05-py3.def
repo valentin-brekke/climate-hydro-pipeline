@@ -1,0 +1,12 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:25.05-py3
+
+# Rebuilds the base container used for all HiRO-ACE inference on Isambard-AI
+# (arm64 / GH200). Confirmed provenance via:
+#   apptainer inspect -d pytorch_25.05-py3.sif
+# which reports exactly this bootstrap/from pair.
+#
+# This image provides torch 2.8.0a0+5228986 (NVIDIA-patched, nv25.05 build),
+# CUDA 12.9 / cuDNN 9.10 / NCCL 2.26, and the rest of the NGC PyTorch stack.
+# It is NOT sufficient on its own — see build_venv.sh for the venv layer
+# that adds fme and its dependencies on top.

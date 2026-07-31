@@ -1,0 +1,37 @@
+name: japan-model
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  # Core scientific stack
+  - numpy
+  - pandas
+  - xarray
+  - zarr
+  # Geospatial
+  - geopandas
+  - shapely
+  - contextily
+  # Graph / utilities
+  - networkx
+  - tqdm
+  - joblib
+  - matplotlib
+  # Interactive visualisation
+  - hvplot
+  - holoviews
+  - geoviews
+  - panel
+  # Notebook
+  - jupyterlab
+  - ipython
+  - ipywidgets
+  - jupyter_bokeh
+  - pip
+  # torch installed separately on a GPU node, see ../README.md:
+  # srun --gpus 1 --pty bash
+  # pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+  # pip install -e /projects/u6t/vbrekke/DiffHydro
+  # pip install -e /projects/u6t/vbrekke/DiffRoute
+  # pip install -e /projects/u6t/vbrekke/xtensor

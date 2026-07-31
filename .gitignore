@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Environments
+venv/
+.venv/
+env/
+.conda/
+
+# Weights, data, containers — fetched/built, not committed
+*.ckpt
+*.pt
+*.nc
+*.h5
+*.pkl
+*.sif
+data/
+forcing_data/
+initial_conditions/
+*.zarr/
+
+# Run artifacts
+outputs/
+logs/
+results/
+generated_configs/
+
+# Plot outputs
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.pdf
+
+# Secrets
+.env
+*.key
+credentials.json
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
