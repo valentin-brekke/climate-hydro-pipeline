@@ -11,16 +11,24 @@
 #SBATCH --job-name=hiro-ace
 #SBATCH --gpus=4
 #SBATCH --time=24:00:00
-#SBATCH --output=/scratch/u6t/vbrekke.u6t/hiroace/logs/%j_hiro_ace.out
-#SBATCH --error=/scratch/u6t/vbrekke.u6t/hiroace/logs/%j_hiro_ace.err
+#SBATCH --output=/projects/u6t/vbrekke/climate-hydro-pipeline/hiroace/logs/%j_hiro_ace.out
+#SBATCH --error=/projects/u6t/vbrekke/climate-hydro-pipeline/hiroace/logs/%j_hiro_ace.err
 
-BASE=/scratch/u6t/vbrekke.u6t/hiroace
+# BASE must be a hardcoded absolute path, not computed from the script's own
+# location (e.g. via $BASH_SOURCE) — sbatch copies the batch script into a
+# per-job spool dir on the compute node and runs that copy, so the script
+# has no reliable way to find out where it originally lived. Same reason
+# the #SBATCH paths above are hardcoded. Update this by hand if the repo
+# moves.
+BASE=/projects/u6t/vbrekke/climate-hydro-pipeline
+
 SIF=$BASE/pytorch_25.05-py3.sif
-VENV=$BASE/venv/fme311
-CONFIGS=$BASE/repo/HiRO-ACE
-OUTPUTS=$BASE/outputs/run_1yr_ens4
+VENV=/work/venv/fme311
+ACE_CONFIG=/work/hiroace/configs/isambard/ace2s_inference_config_global.yaml
+HIRO_CONFIG=/work/hiroace/configs/isambard/hiro_downscaling_ace2s_pnw_output.yaml
+OUTPUTS=$BASE/hiroace/outputs/run_1yr_ens4
 
-mkdir -p $BASE/logs
+mkdir -p $BASE/hiroace/logs
 mkdir -p $OUTPUTS/ace2s
 mkdir -p $OUTPUTS/hiro
 
@@ -41,8 +49,8 @@ srun --ntasks=1 --gpus=1 --exclusive \
         --nv \
         --bind $BASE:/work \
         $SIF \
-        bash -lc "source /work/venv/fme311/bin/activate && \
-                  python -m fme.ace.inference /work/repo/HiRO-ACE/ace2s_inference_config_global.yaml"
+        bash -lc "source $VENV/bin/activate && \
+                  python -m fme.ace.inference $ACE_CONFIG"
 
 ACE_EXIT=$?
 if [ $ACE_EXIT -ne 0 ]; then
@@ -71,11 +79,11 @@ srun --ntasks=1 --gpus=4 --exclusive \
         --nv \
         --bind $BASE:/work \
         $SIF \
-        bash -lc "source /work/venv/fme311/bin/activate && \
+        bash -lc "source $VENV/bin/activate && \
                   torchrun \
                   --nproc_per_node $NGPU \
                   -m fme.downscaling.inference \
-                  /work/repo/HiRO-ACE/ace2s_inference_config_global.yaml"
+                  $HIRO_CONFIG"
 
 HIRO_EXIT=$?
 if [ $HIRO_EXIT -ne 0 ]; then

@@ -11,7 +11,8 @@ Combines two components, currently both Isambard-AI only:
 `environment/` holds the runtime setup for both, one subfolder per
 component per HPC site — see `environment/README.md`.
 
-Neither component's weights/data are in this repo. `hiroace/fetch_weights.sh`
-and `hiroace/fetch_forcing_data.sh` pull them from the HF Hub; hydro's
+Neither component's weights/data are tracked by git. `hiroace/fetch_weights.sh`
+and `hiroace/fetch_forcing_data.sh` pull them from the HF Hub into
+`hiroace/data/` (gitignored, real files — not a git-lfs-tracked path); hydro's
 `DiffHydro`/`DiffRoute`/`xtensor` deps and `results/default.pt` still need
 their own fetch/build step (not yet written).

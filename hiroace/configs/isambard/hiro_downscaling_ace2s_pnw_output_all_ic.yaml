@@ -1,34 +1,34 @@
-experiment_dir: /work/outputs/run_1yr_ens4/hiro
+experiment_dir: /work/hiroace/outputs/run_1yr_ens4/hiro
 patch:
   divide_generation: true
   composite_prediction: true
   coarse_horizontal_overlap: 1
 model:
-  checkpoint_path: /work/repo/HiRO-ACE/HiRO.ckpt
+  checkpoint_path: /work/hiroace/data/HiRO.ckpt
   rename:
     eastward_wind_at_ten_meters: UGRD10m
     northward_wind_at_ten_meters: VGRD10m
 data:
   coarse:
-    - data_path: /work/outputs/run_1yr_ens4/ace2s
+    - data_path: /work/hiroace/outputs/run_1yr_ens4/ace2s
       engine: zarr
       file_pattern: output_6hourly_ace2s_predictions_ic0000.zarr
       batch_size: 1
       num_data_workers: 2
       strict_ensemble: false
-    - data_path: /work/outputs/run_1yr_ens4/ace2s
+    - data_path: /work/hiroace/outputs/run_1yr_ens4/ace2s
       engine: zarr
       file_pattern: output_6hourly_ace2s_predictions_ic0001.zarr
       batch_size: 1
       num_data_workers: 2
       strict_ensemble: false
-    - data_path: /work/outputs/run_1yr_ens4/ace2s
+    - data_path: /work/hiroace/outputs/run_1yr_ens4/ace2s
       engine: zarr
       file_pattern: output_6hourly_ace2s_predictions_ic0002.zarr
       batch_size: 1
       num_data_workers: 2
       strict_ensemble: false
-    - data_path: /work/outputs/run_1yr_ens4/ace2s
+    - data_path: /work/hiroace/outputs/run_1yr_ens4/ace2s
       engine: zarr
       file_pattern: output_6hourly_ace2s_predictions_ic0003.zarr
       batch_size: 1

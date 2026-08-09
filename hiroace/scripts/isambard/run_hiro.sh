@@ -1,17 +1,20 @@
 #!/bin/bash
-# Standalone HiRO downscaling job for the 10-year ACE2S ensemble outputs.
-# Fills the __ACE_DIR__/__IC_TAG__ placeholders in the template config via
-# sed, per ensemble member, instead of hand-duplicating one config per IC.
+# HiRO downscaling for the "with_temp" ACE2S test output (10-year span,
+# 2 ACE2S ensemble members: ic0000, ic0001 — see run_ace2s.sh). Runs 4 HiRO
+# ensemble members per ACE2S IC (n_ens: 4 in the template config), looping
+# over both ICs in one job. Fills the __ACE_DIR__/__IC_TAG__ placeholders
+# in the template config via sed, per IC, instead of hand-duplicating one
+# config per IC.
 #
 # Usage:
-#   sbatch run_hiro_downscaling_10yr.sh
+#   sbatch run_hiro.sh
 
-#SBATCH --job-name=hiro-10yr
+#SBATCH --job-name=hiro-with-temp
 #SBATCH --nodes=1
 #SBATCH --gpus=4
 #SBATCH --time=24:00:00
-#SBATCH --output=/projects/u6t/vbrekke/climate-hydro-pipeline/hiroace/logs/run_10yr_ens15/%j_hiro_10yr.out
-#SBATCH --error=/projects/u6t/vbrekke/climate-hydro-pipeline/hiroace/logs/run_10yr_ens15/%j_hiro_10yr.err
+#SBATCH --output=/projects/u6t/vbrekke/climate-hydro-pipeline/hiroace/logs/with_temp/%j_hiro.out
+#SBATCH --error=/projects/u6t/vbrekke/climate-hydro-pipeline/hiroace/logs/with_temp/%j_hiro.err
 
 # BASE must be a hardcoded absolute path, not computed from the script's own
 # location (e.g. via $BASH_SOURCE) — sbatch copies the batch script into a
@@ -25,14 +28,18 @@ SIF=$BASE/pytorch_25.05-py3.sif
 NGPU=4
 WORK_BASE=/work
 VENV=$WORK_BASE/venv/fme311
-ACE_DIR_HOST=$BASE/hiroace/outputs/run_10yr_ens15/ace2s
-ACE_DIR_WORK=$WORK_BASE/hiroace/outputs/run_10yr_ens15/ace2s
-HIRO_DIR_HOST=$BASE/hiroace/outputs/run_10yr_ens15/hiro
+ACE_DIR_HOST=$BASE/hiroace/outputs/with_temp/ace2s
+ACE_DIR_WORK=$WORK_BASE/hiroace/outputs/with_temp/ace2s
+HIRO_DIR_HOST=$BASE/hiroace/outputs/with_temp/hiro
 TEMPLATE_HOST=$BASE/hiroace/configs/isambard/hiro_downscaling_ace2s_pnw_output_10yr_template.yaml
-TMP_CONFIG_DIR_HOST=$BASE/hiroace/configs/isambard/generated_configs
-TMP_CONFIG_DIR_WORK=$WORK_BASE/hiroace/configs/isambard/generated_configs
+# Separate generated_configs subdir from run_hiro_downscaling_10yr.sh's —
+# both scripts fill the same template and both produce ic0000/ic0001-style
+# tags, so sharing one dir risks one run's generated config clobbering the
+# other's.
+TMP_CONFIG_DIR_HOST=$BASE/hiroace/configs/isambard/generated_configs/with_temp
+TMP_CONFIG_DIR_WORK=$WORK_BASE/hiroace/configs/isambard/generated_configs/with_temp
 
-mkdir -p $BASE/hiroace/logs/run_10yr_ens15
+mkdir -p $BASE/hiroace/logs/with_temp
 mkdir -p $HIRO_DIR_HOST
 mkdir -p $TMP_CONFIG_DIR_HOST
 
@@ -46,7 +53,7 @@ echo "Start          : $(date)"
 echo "================================================"
 
 shopt -s nullglob
-ALL_ACE_FILES=($ACE_DIR_HOST/output_6hourly_ace2s_predictions_ic*.zarr)
+ALL_ACE_FILES=($ACE_DIR_HOST/output_6hourly_ace2s_ic*.zarr)
 
 if [ ${#ALL_ACE_FILES[@]} -eq 0 ]; then
     echo "ERROR: no ACE2S zarr files found in $ACE_DIR_HOST"
@@ -55,7 +62,7 @@ fi
 
 for ZARR_HOST in "${ALL_ACE_FILES[@]}"; do
     ZARR_BASE=$(basename "$ZARR_HOST")
-    IC_TAG=${ZARR_BASE#output_6hourly_ace2s_predictions_}
+    IC_TAG=${ZARR_BASE#output_6hourly_ace2s_}
     IC_TAG=${IC_TAG%.zarr}
     TMP_CONFIG_HOST=$TMP_CONFIG_DIR_HOST/hiro_downscaling_${IC_TAG}.yaml
     TMP_CONFIG_WORK=$TMP_CONFIG_DIR_WORK/hiro_downscaling_${IC_TAG}.yaml
@@ -89,6 +96,6 @@ for ZARR_HOST in "${ALL_ACE_FILES[@]}"; do
 done
 
 echo ""
-echo "HiRO 10-year downscaling complete: $(date)"
+echo "HiRO downscaling complete: $(date)"
 echo "Outputs:"
 ls -lh $HIRO_DIR_HOST 2>/dev/null || true

@@ -1,8 +1,8 @@
-experiment_dir: /work/outputs/with_temp/ace2s
-n_forward_steps: 1459
+experiment_dir: /work/hiroace/outputs/with_temp/ace2s
+n_forward_steps: 14607
 forward_steps_in_memory: 50
-checkpoint_path: /work/repo/HiRO-ACE/ACE2S.ckpt
-n_ensemble_per_ic: 4
+checkpoint_path: /work/hiroace/data/ACE2S.ckpt
+n_ensemble_per_ic: 2
 
 logging:
   log_to_screen: true
@@ -11,14 +11,14 @@ logging:
   project: ace
 
 initial_condition:
-  path: /work/repo/HiRO-ACE/initial_conditions/ic_2023.nc
+  path: /work/hiroace/data/initial_conditions/ic_2014.nc
   start_indices:
     times:
-      - "2023-01-01T00:00:00"
+      - "2014-01-01T00:00:00"
 
 forcing_loader:
   dataset:
-    data_path: /work/repo/HiRO-ACE/forcing_data
+    data_path: /work/hiroace/data/forcing_data
   num_data_workers: 2
 
 data_writer:

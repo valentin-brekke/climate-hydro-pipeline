@@ -9,22 +9,65 @@ scripts, not the model repo itself.
 hiroace/
 ├── fetch_weights.sh        # pulls ACE2S.ckpt, HiRO.ckpt into $HIROACE_DATA_DIR
 ├── fetch_forcing_data.sh   # pulls forcing_data/, initial_conditions/
+├── data/                   # gitignored — weights + forcing_data/ + initial_conditions/
 ├── configs/isambard/       # inference configs
 └── scripts/isambard/       # sbatch submission scripts
 ```
 
-See `environment/hiroace/isambard/` (sibling folder) for the
-container+venv setup these scripts assume.
+`hiroace/data/` is the default `$HIROACE_DATA_DIR` on Isambard — run
+`HIROACE_DATA_DIR=hiroace/data ./fetch_weights.sh` (and the forcing-data
+equivalent) from the repo root to populate it. The Apptainer container
+(`pytorch_25.05-py3.sif`) and venv (`venv/fme311`) live at the repo root,
+also gitignored — see `environment/hiroace/isambard/` (sibling folder) for
+how to build them.
 
 ## Status: not yet site-portable
 
-Configs and scripts currently hardcode Isambard paths (`/work/...` via the
-Apptainer bind mount, `/scratch/u6t/vbrekke.u6t/...`) rather than using
-`$HIROACE_DATA_DIR` or placeholders — that's why everything lives under
-`isambard/` for now instead of being shared across sites. Planned next
-step: templatize configs like `hiro_downscaling_ace2s_pnw_output_10yr_template.yaml`
-already does (`__ACE_DIR__`/`__IC_TAG__` filled by `sed` at submit time),
-and push all-site-specific bits into the submission scripts only.
+The submission scripts hardcode `BASE=/projects/u6t/vbrekke/climate-hydro-pipeline`
+(repo root) and bind-mount it whole to `/work`, so config paths like
+`/work/hiroace/data/ACE2S.ckpt` resolve correctly inside the container.
+This has to be a literal path, not computed from the script's own
+location (e.g. via `$BASH_SOURCE`) — `sbatch` copies the batch script into
+a per-job spool dir on the compute node and runs *that* copy, so at
+runtime the script has no reliable way to find out where it originally
+lived. (Learned this the hard way: an earlier version tried
+`$BASH_SOURCE`-relative resolution and it silently landed on `/var`,
+apptainer's default working dir, instead of the repo — same underlying
+constraint as `#SBATCH --output`/`--error`, which are hardcoded for the
+same reason.) If the repo moves, `BASE` and the `#SBATCH` paths both need
+updating by hand.
+
+Beyond that, the scripts also assume Apptainer + GH200 (`--gpus=N`
+allocation semantics) + the `workq` partition, so this isn't portable to a
+different HPC site regardless. That's why everything lives under
+`isambard/` for now instead of being shared across sites — a new site
+would be a new sibling folder (`scripts/<site>/`, `configs/<site>/`), not
+an edit to this one. Planned next step: templatize configs like
+`hiro_downscaling_ace2s_pnw_output_10yr_template.yaml` already does
+(`__ACE_DIR__`/`__IC_TAG__` filled by `sed` at submit time) for the
+remaining hardcoded bits.
+
+## Known gap: fetch/build scripts are untested end-to-end
+
+`hiroace/data/`, `pytorch_25.05-py3.sif`, and `venv/fme311` currently in
+this repo were populated by *moving* an already-fetched/built copy from an
+older scratch layout, not by actually running `fetch_weights.sh` /
+`fetch_forcing_data.sh` / `environment/hiroace/isambard/build_container.sh`
+/ `build_venv.sh`. So the "someone clones this repo fresh and reproduces
+the environment" path has never been exercised. Specific unknowns:
+
+- **TODO**: run `fetch_weights.sh` / `fetch_forcing_data.sh` against a
+  throwaway `HIROACE_DATA_DIR` and confirm they complete cleanly from
+  nothing.
+- **TODO**: run `build_container.sh` / `build_venv.sh` from scratch and
+  confirm `apptainer build` works on Isambard without extra privileges
+  (may need `--fakeroot` or a build-service config — not yet confirmed).
+- Relatedly: re-running the fetch scripts against an *already-populated*
+  `hiroace/data/` (e.g. this one) is also unverified — the HF Hub
+  metadata cache (`.cache/huggingface/download/`, used to detect
+  already-downloaded files) from the original manual download wasn't
+  carried over during the move, so it's unclear whether a re-run would
+  skip existing files or redownload over them.
 
 ## Configs
 

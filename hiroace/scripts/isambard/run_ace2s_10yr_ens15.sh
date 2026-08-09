@@ -7,17 +7,24 @@
 #SBATCH --job-name=ace2s-10yr-e15
 #SBATCH --gpus=1
 #SBATCH --time=24:00:00
-#SBATCH --output=/scratch/u6t/vbrekke.u6t/hiroace/logs/run_10yr_ens15/%j_ace2s_10yr_ens15.out
-#SBATCH --error=/scratch/u6t/vbrekke.u6t/hiroace/logs/run_10yr_ens15/%j_ace2s_10yr_ens15.err
+#SBATCH --output=/projects/u6t/vbrekke/climate-hydro-pipeline/hiroace/logs/run_10yr_ens15/%j_ace2s_10yr_ens15.out
+#SBATCH --error=/projects/u6t/vbrekke/climate-hydro-pipeline/hiroace/logs/run_10yr_ens15/%j_ace2s_10yr_ens15.err
 
-BASE=/scratch/u6t/vbrekke.u6t/hiroace
+# BASE must be a hardcoded absolute path, not computed from the script's own
+# location (e.g. via $BASH_SOURCE) — sbatch copies the batch script into a
+# per-job spool dir on the compute node and runs that copy, so the script
+# has no reliable way to find out where it originally lived. Same reason
+# the #SBATCH paths above are hardcoded. Update this by hand if the repo
+# moves.
+BASE=/projects/u6t/vbrekke/climate-hydro-pipeline
+
 SIF=$BASE/pytorch_25.05-py3.sif
 WORK_BASE=/work
 VENV=$WORK_BASE/venv/fme311
-CONFIG=/work/repo/HiRO-ACE/large_runs/ace2s_inference_config_global_10yr_ens15.yaml
-OUTPUTS=$BASE/outputs/run_10yr_ens15/ace2s
+CONFIG=$WORK_BASE/hiroace/configs/isambard/ace2s_inference_config_global_10yr_ens15.yaml
+OUTPUTS=$BASE/hiroace/outputs/run_10yr_ens15/ace2s
 
-mkdir -p $BASE/logs/run_10yr_ens15
+mkdir -p $BASE/hiroace/logs/run_10yr_ens15
 mkdir -p $OUTPUTS
 
 echo "================================================"

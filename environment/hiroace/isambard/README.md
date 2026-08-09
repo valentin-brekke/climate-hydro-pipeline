@@ -37,3 +37,8 @@ cd environment/hiroace/isambard
 ./build_container.sh   # -> ../../../pytorch_25.05-py3.sif
 ./build_venv.sh         # -> ../../../venv/fme311
 ```
+
+**Untested as of 2026-08-06**: the `.sif`/`venv/fme311` currently in the
+repo were moved in from an older, manually-built copy — these scripts
+themselves haven't been run from scratch yet. See the "Known gap" note in
+`hiroace/README.md` for the TODO.
