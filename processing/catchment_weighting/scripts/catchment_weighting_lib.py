@@ -433,3 +433,87 @@ def write_catchment_series_to_zarr(zarr_path, var, weights_df, out_path, lat_dim
         if verbose:
             print(f"  wrote chunk {i} ({n_written} timesteps so far) -> {out_path}")
     return out_path
+
+
+# --------------------------------------------------------------------------
+# Assemble into the hydro model's input schema (dynamic_inp.zarr-shaped)
+# --------------------------------------------------------------------------
+#
+# Deliberately placed here, after catchment-averaging, not in
+# processing/temporal_binning: that module still operates on the (lat, lon)
+# grid, where unstacking `bin` into 6 separate named variables would mean
+# each of the 6 grid-shaped variables needing its own separate
+# catchment-weighting call (12 calls total for temp+precip) instead of one
+# call per variable that already treats `bin` as a pass-through dim. This
+# assembly step -- reshaping into the exact schema hydro/pipeline expects
+# -- is really coupling logic between the climate side and the hydro
+# model's input contract, not a grid/temporal/spatial transformation in its
+# own right, so it belongs at the very end of the climate-side chain.
+
+def unstack_bin_dim(da, prefix, bin_dim="bin"):
+    """Split a (..., bin, ...) DataArray into a Dataset of separate
+    `{prefix}_4h_bin_{i}` variables -- the shape `hydro/pipeline`'s
+    `dynamic_inp.zarr`-style forcing actually expects (confirmed against
+    xtensor's `Dataset.from_xarray(...).to_datatensor(dim="variable")`,
+    which stacks a Dataset's *named data variables*, not an existing
+    dimension, into the array the model consumes).
+
+    Bin index i = the 4h window ending at hour 4*(i+1) -- confirmed to
+    match `msm_a_temp_4h_bin_i`'s own real hour decomposition empirically
+    (see docs/catchment_weighting.md). `da[bin_dim]` values (from
+    `processing/temporal_binning`) are already end-hours in ascending
+    order, so enumerating them directly gives the right index.
+    """
+    bin_hours = sorted(da[bin_dim].values.tolist())
+    return xr.Dataset({
+        f"{prefix}_4h_bin_{i}": da.sel(**{bin_dim: h}).drop_vars(bin_dim)
+        for i, h in enumerate(bin_hours)
+    })
+
+
+def assemble_dynamic_forcing(temp_da, precip_da, temp_prefix="hiroace_temp",
+                              precip_prefix="hiroace_prcp", catchment_dim="catchment_id",
+                              bin_dim="bin", standard_calendar=True):
+    """Combine catchment-weighted, 4h-binned temperature and precipitation
+    (this module's `apply_catchment_weights` output, piped through
+    `processing/temporal_binning` first) into one `dynamic_inp.zarr`-shaped
+    Dataset: `{temp_prefix}_4h_bin_0..5` / `{precip_prefix}_4h_bin_0..5`
+    variables, dims (time, spatial[, ensemble]) -- ready for
+    `hydro/pipeline/run_predict.py --forcing-zarr`.
+
+    `temp_da`/`precip_da`: xr.DataArray, dims (time, bin, catchment_id[,
+    ensemble]). `catchment_id` is renamed to `spatial` here to match
+    `dynamic_inp.zarr`'s own coordinate name directly (confirmed against
+    the real file). Precipitation's `ensemble` dim, if present, passes
+    through untouched onto its two `_4h_bin_i` variables --
+    `hydro/pipeline/run_predict.py` already loops over it; temperature
+    simply won't have that dim, which xarray Datasets tolerate fine
+    (variables in one Dataset don't need matching dims).
+
+    `standard_calendar`: if True (default), converts a cftime/non-standard
+    time axis (e.g. HiRO-ACE's Julian-calendar output, vs.
+    `dynamic_inp.zarr`'s plain `datetime64[ns]`) to the standard
+    (Gregorian) calendar as plain `datetime64[ns]`. This is cheap
+    insurance against dtype surprises in anything that cross-references
+    real-calendar dates later (e.g. `run_evaluate.py`'s `y.sel(time=...)`)
+    -- not because the calendar choice is physically meaningful for a
+    synthetic scenario run with no fixed real date to begin with (see
+    hydro/pipeline/README.md's note on this).
+    """
+    temp_ds = unstack_bin_dim(temp_da.rename({catchment_dim: "spatial"}), temp_prefix, bin_dim)
+    precip_ds = unstack_bin_dim(precip_da.rename({catchment_dim: "spatial"}), precip_prefix, bin_dim)
+    combined = xr.merge([temp_ds, precip_ds])
+
+    if standard_calendar:
+        combined = combined.convert_calendar("standard", use_cftime=False)
+
+    return combined
+
+
+def write_dynamic_forcing_zarr(temp_da, precip_da, out_path, **kwargs):
+    """`assemble_dynamic_forcing` then write the result to `out_path`."""
+    out_path = Path(out_path)
+    ds = assemble_dynamic_forcing(temp_da, precip_da, **kwargs)
+    ds.to_zarr(out_path, mode="w")
+    print(f"Assembled {list(ds.data_vars)} -> {out_path}")
+    return ds

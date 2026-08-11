@@ -146,15 +146,38 @@ built as a row-major `i * n_lon + j` flat index — an assumption about how
 the runoff `DataTensor`'s `"spatial"` coordinate is flattened elsewhere in
 the pipeline, not something confirmable from this repo alone.
 
-## 6. Deliverables
+## 6. Assembling into the hydro model's input schema
+
+The final step before `hydro/pipeline/run_predict.py` can consume HiRO-ACE-derived forcing:
+`assemble_dynamic_forcing`/`write_dynamic_forcing_zarr` take this module's own catchment-weighted
+output for temperature and precipitation (each still carrying `processing/temporal_binning`'s `bin`
+dim) and combine them into one `dynamic_inp.zarr`-shaped Dataset — `hiroace_temp_4h_bin_0..5`/
+`hiroace_prcp_4h_bin_0..5` data variables (not a `bin` dimension; confirmed via `xtensor`'s
+`Dataset.from_xarray(...).to_datatensor(dim="variable")`, which stacks named data variables, not an
+existing dim), `catchment_id` renamed to `spatial` to match the real file's coordinate name, and the
+time axis converted from HiRO-ACE's cftime/Julian-calendar output to plain `datetime64[ns]` on the
+standard calendar (cheap insurance against dtype surprises downstream, not because the calendar choice
+is physically meaningful for a synthetic scenario run — see `hydro/pipeline/README.md`).
+
+Deliberately placed *after* catchment-averaging, not in `temporal_binning`: that module still operates
+on the grid, where unstacking `bin` there would mean 12 separate catchment-weighting calls (6 bins ×
+2 variables) instead of 2 (one per variable, each already treating `bin` as a pass-through dim).
+
+Verified against real data (2026-08-11): real rebinned HiRO-ACE temperature through real catchment
+weights, combined with a synthetic precipitation series (both with and without an `ensemble` dim, since
+temperature has none and precipitation does) — output variable names, `spatial`/`time` dtypes, and a
+zarr round-trip all confirmed correct.
+
+## 7. Deliverables
 
 | File | Purpose |
 |---|---|
 | `scripts/catchment_weighting.ipynb` | Proof-of-concept notebook: loads real basins + both HiRO outputs, computes/validates/visualizes weights, applies them to temperature and precipitation, sanity-checks the result against the raw grid, saves demo output. Executed end-to-end against the full 8,893-catchment set. |
-| `scripts/catchment_weighting_lib.py` | The reusable functions (weight computation, validation, sparse weighted-aggregation, zarr-chunked streaming, `to_diffhydro_weight_format` compatibility layer) |
+| `scripts/catchment_weighting_lib.py` | The reusable functions (weight computation, validation, sparse weighted-aggregation, zarr-chunked streaming, `to_diffhydro_weight_format` compatibility layer, `assemble_dynamic_forcing`/`write_dynamic_forcing_zarr` final-assembly step) |
 | `scripts/run_catchment_weighting.py` | Command-line script: point it at an input zarr + basins + a variable name, get back a `(time[, ensemble], catchment_id)` zarr of catchment-averaged values. Verified to produce output bit-identical to the notebook's in-memory path (including across a chunked, multi-write run). |
+| `scripts/run_assemble_dynamic_forcing.py` | Command-line script: point it at catchment-weighted temp + precip zarrs, get back one combined `dynamic_inp.zarr`-shaped store. |
 
-## 7. Known limitations & next steps
+## 8. Known limitations & next steps
 
 1. **No NaN-awareness.** If any grid cell contributing weight to a
    catchment is NaN, the whole catchment's weighted sum comes out NaN.
