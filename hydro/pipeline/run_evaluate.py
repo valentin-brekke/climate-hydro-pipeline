@@ -41,7 +41,7 @@ def parse_args():
     p.add_argument("--discharge-zarr", default=None, help="Defaults to {data-root}/discharges.zarr")
     p.add_argument("--results-dir", required=True, help="Folder with the {exp-name}.pt checkpoint")
     p.add_argument("--exp-name", default="default")
-    p.add_argument("--device", default="cuda:0")
+    p.add_argument("--device", default="cpu", help="Pass cuda:0 explicitly on a GPU node")
     p.add_argument("--stats-path", default=None,
                    help="Frozen normalization stats (data.save_stats output). If omitted, stats "
                         "are computed live from this run's own data -- matching Analysis.ipynb's "

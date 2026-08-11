@@ -76,7 +76,7 @@ def parse_args():
                    help="data.DYNAMIC_VAR_DICT keys to select from --forcing-zarr")
     p.add_argument("--results-dir", required=True, help="Folder with the {exp-name}.pt checkpoint")
     p.add_argument("--exp-name", default="default")
-    p.add_argument("--device", default="cuda:0")
+    p.add_argument("--device", default="cpu", help="Pass cuda:0 explicitly on a GPU node")
     p.add_argument("--stats-path", required=True,
                    help="Frozen normalization stats (data.save_stats output, computed once from "
                         "the original historical training data -- see README.md).")

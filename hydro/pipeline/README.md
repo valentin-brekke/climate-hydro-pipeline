@@ -1,6 +1,6 @@
 # Hydro Model Pipeline — Clean Refactor of `Analysis.ipynb`
 
-**Status:** pure data layer fully implemented and verified against real data; `diffhydro`/`xtensor`-touching layer implemented against the actual library source but **not runnable/tested anywhere this was written** — needs an Isambard run to confirm. See §4 for the exact breakdown.
+**Status:** pure data layer fully implemented and verified against real data. `diffhydro`/`xtensor`-touching layer implemented against the actual library source, and confirmed — by actually cloning and `pip install -e`-ing all three repos locally on 2026-08-11 — that it **cannot run on macOS at all**, for a specific, confirmed reason (§4.1), not just "untested." Needs Isambard (or another Linux+CUDA/ROCm machine). See §4 for the full breakdown.
 
 ## 1. What this is
 
@@ -46,9 +46,39 @@ Visualization (`AnalysisPlot`, holoviews/geoviews/panel) stays a notebook, delib
   - `normalize_forcing`/`normalize_discharge`: confirmed per-variable mean≈0/std≈1 after normalization (std for precip bins comes out to ~0.9998, not exactly 1.0 — traced to the same `fillna(0)`-after-normalizing step the original applies, not a bug).
   - Stats save/load roundtrip (`save_stats`/`load_stats`) confirmed exact.
 
-### Implemented against the actual library source, but not executed anywhere
+### 4.1 Confirmed blocker: this cannot run on macOS, for a specific reason — not just "untested"
 
-`tensors.py`, `model.py`, `run_evaluate.py`, `run_predict.py` — no `torch`/`xtensor`/`diffhydro` install exists anywhere this was written. Every API contract used was confirmed by reading the actual source on GitHub as of 2026-08-11 (not guessed, not from memory of typical PyTorch-project conventions):
+Tried it directly (2026-08-11): created a local env, `pip install torch` (clean — Mac gets a CPU/MPS build automatically, no CUDA needed for the install itself), cloned all three repos, `pip install -e` each. `xtensor` and `diffroute` both installed with **zero build errors** (confirms the earlier pyproject.toml read: genuinely pure-Python packaging, no CUDA compile step).
+
+But `import diffhydro` fails outright, unconditionally, before any device selection ever runs:
+
+```
+diffhydro/__init__.py → .structs → diffroute/__init__.py → .router → .agg
+  → .ops → transitive_closure.py → closure_sub.py
+  → import triton, triton.language as tl
+ModuleNotFoundError: No module named 'triton'
+```
+
+`pip install triton` on this Mac: **"No matching distribution found for triton"** — it has no macOS build at all (Triton targets NVIDIA CUDA / AMD ROCm on Linux). This is a hard platform gap, not a device-selection issue — passing `device="cpu"` doesn't help, since the failure happens at `import diffhydro`, before `model.py`'s CPU default ever gets a chance to matter.
+
+**Not one isolated function — mapped the actual import graph, not just the first failure.** Triton is the numerical core of at least three separate primitives, all imported unconditionally the moment `diffroute` loads (`router.py`, `diffroute/__init__.py`'s own entry point, imports both submodules below directly):
+
+| File | What it computes | Triton kernels |
+|---|---|---|
+| `ops/prefix_sum.py` | parallel prefix-sum scan | 3 |
+| `ops/closure_sub.py` | transitive-closure step — aggregates each catchment's routing IRF along every upstream path in the river network (`log_transitive_closure`, a numerically-careful log/complex-domain recursion) | 2 |
+| `ops/conv/conv_temp_1D_triton.py` | forward **and backward** passes of the block-sparse causal 1D convolution that applies the aggregated IRF kernel to runoff — i.e. the actual routing step, in both inference and the training loop | 3 |
+| `ops/scatter_reduce_triton.py` | scatter-reduce | 2 (imported only by `ops/scatter_reduce.py`, which nothing else appears to import — likely unused/in-progress, not confirmed dead) |
+
+So this is core numerical machinery, not a peripheral optimization with a flag to skip it.
+
+**Considered and deliberately not attempted:** hand-porting these to pure PyTorch to unblock local testing. Technically possible, but genuinely risky to do blind, and bigger than it first looked — three separate kernels (one with a backward pass) to reimplement and validate, with no local reference to check correctness against (the only reference *is* the Triton kernel this Mac can't run). A subtly-wrong reimplementation could pass a shape/import smoke test while silently producing wrong routing behavior, which is a worse outcome than "can't test locally yet." Not worth it unless there's a real need to iterate faster than Isambard allows on *this specific* piece — flag if that changes.
+
+**Net effect on what local testing can and can't cover:** `data.py`'s pure layer (§4, above) is validated and stays that way — nothing here affects it. Everything from `tensors.py` down needs Isambard (or another Linux box with a CUDA or ROCm GPU) — confirmed necessary, not just unconfirmed-so-far.
+
+### Implemented against the actual library source, but not executable on macOS
+
+`tensors.py`, `model.py`, `run_evaluate.py`, `run_predict.py` — blocked from running here by §4.1, not just "no install available." Every API contract used was still confirmed by reading the actual source on GitHub as of 2026-08-11 (not guessed, not from memory of typical PyTorch-project conventions):
 
 | Used here | Confirmed from | What was confirmed |
 |---|---|---|
@@ -74,6 +104,19 @@ Smaller things worth a first-run sanity check, called out inline in `tensors.py`
 
 ## 6. Next steps
 
-1. Run `run_evaluate.py` on Isambard against the same historical data `Analysis.ipynb` uses — first check should be reproducing NSE median ≈ 0.9135 (the cached reference), and resolving the 877-vs-962 gauge-count question.
+1. **Requires Isambard (or another Linux + CUDA/ROCm machine) — confirmed, not assumed (§4.1).** Run `run_evaluate.py` there against the same historical data `Analysis.ipynb` uses — first check should be reproducing NSE median ≈ 0.9135 (the cached reference), and resolving the 877-vs-962 gauge-count question.
 2. Compute and freeze the real training-time normalization stats (§5).
 3. Once `processing/catchment_weighting` + `processing/temporal_binning`'s final-assembly gap is filled (a `dynamic_inp.zarr`-shaped store with `hiroace_temp_4h_bin_0..5`/`hiroace_prcp_4h_bin_0..5` variables), run `run_predict.py` against it — first real end-to-end HiRO-ACE → hydro-model run.
+
+## 7. Local environment, for reference
+
+What was actually set up and confirmed installable on this Mac (2026-08-11), in case useful for a future attempt or for comparison against Isambard's own install:
+```
+mamba create -n hydro-pipeline -c conda-forge python=3.11 numpy pandas xarray zarr geopandas shapely networkx tqdm joblib pip
+mamba run -n hydro-pipeline pip install torch          # clean, CPU/MPS build, no CUDA needed
+git clone https://github.com/TristHas/xtensor && pip install -e xtensor      # clean
+git clone https://github.com/TristHas/DiffRoute && pip install -e DiffRoute  # clean
+git clone https://github.com/TristHas/DiffHydro && pip install -e DiffHydro  # clean
+python -c "import diffhydro"   # fails: ModuleNotFoundError: No module named 'triton' -- see §4.1
+```
+(Also hit a separate, unrelated, easily-worked-around issue getting there: a duplicate-OpenMP crash from conda-forge's numpy and pip's torch both bundling `libomp` — standard fix is `KMP_DUPLICATE_LIB_OK=TRUE` in the environment; harmless for this kind of single-process testing.)

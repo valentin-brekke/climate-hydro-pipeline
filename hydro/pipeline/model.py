@@ -1,13 +1,16 @@
 """Model construction and checkpoint loading -- also `diffhydro`-touching
-(see `tensors.py`'s docstring: not runnable/tested outside Isambard).
+(see `tensors.py`'s docstring).
 
 Direct port of `Analysis.ipynb`'s model-construction cell, parametrized
 instead of hardcoded (`EXP_NAME="default"`, `DEVICE="cuda:0"` as notebook
-globals) so it works for both `run_evaluate.py` and `run_predict.py`, and
-so `DEVICE` can fall back to CPU for local smoke-testing once a CPU-
-compatible checkpoint exists (HiroACE ships one, `HiRO_cpu.ckpt` --
-worth checking whether DiffHydro's checkpoint needs the same treatment;
-not yet checked).
+globals) so it works for both `run_evaluate.py` and `run_predict.py`.
+
+Defaults to CPU, not `cuda:0` like the original notebook (Isambard-only):
+local testing is on a Mac with no CUDA, and even where CUDA *is* available
+(Isambard), Apple's MPS backend is deliberately never auto-selected here --
+it has real operator-coverage gaps for exactly the kind of ops used here
+(LSTM, scatter/index ops), and correctness matters more than speed for a
+first smoke test. Pass `--device cuda:0` explicitly on a GPU node.
 """
 from pathlib import Path
 
@@ -15,10 +18,10 @@ import torch
 import diffhydro.pipelines as dhp
 
 
-def resolve_device(requested="cuda:0"):
-    """`requested` falls back to CPU if CUDA isn't actually available,
-    rather than failing outright -- useful for any future local
-    smoke-testing."""
+def resolve_device(requested="cpu"):
+    """`requested` falls back to CPU if CUDA was explicitly asked for but
+    isn't actually available, rather than failing outright. Never
+    auto-upgrades to `cuda`/`mps` -- both have to be requested explicitly."""
     if requested.startswith("cuda") and not torch.cuda.is_available():
         return "cpu"
     return requested
