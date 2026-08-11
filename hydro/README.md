@@ -9,8 +9,18 @@ hydro/
 ├── exp_helpers.py, Analysis.ipynb, compute_interpolation_weights.ipynb
 ├── modified_code/       # same 3 files, kept separately as in the source repo
 ├── exploration/         # data_exploration.ipynb
+├── pipeline/            # clean, testable rebase of Analysis.ipynb -- see pipeline/README.md
 └── scripts/isambard/    # vscode_tunnel.sh (sbatch + code tunnel)
 ```
+
+`pipeline/` splits `Analysis.ipynb`'s notebook-global logic into a pure
+data-loading/alignment module (tested here, against real data) and a thin
+`diffhydro`/`xtensor`-wrapping layer (implemented against the actual
+library source, but not runnable anywhere outside Isambard) — plus
+separate `evaluate` (real forcing + discharge, NSE) and `predict` (any
+forcing, no ground truth, e.g. HiRO-ACE-driven) CLI entry points. See
+`pipeline/README.md` for the full design writeup and exactly what's
+verified vs. still needs an Isambard run.
 
 `modified_code/` duplicates `Analysis.ipynb` and
 `compute_interpolation_weights.ipynb` with different content (`exp_helpers.py`
