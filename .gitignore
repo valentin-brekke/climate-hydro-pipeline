@@ -21,6 +21,11 @@ forcing_data/
 initial_conditions/
 *.zarr/
 
+# hydro/data is a symlink to external static hydro data (basins/graph/discharges),
+# not a real directory -- the data/ rule above doesn't match symlinks, so it needs
+# its own line or it'd show up as untracked.
+/hydro/data
+
 # Run artifacts
 outputs/
 logs/

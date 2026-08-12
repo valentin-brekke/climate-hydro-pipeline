@@ -54,6 +54,12 @@ def parse_args():
     p.add_argument("--inference-batch-size", type=int, default=8)
     p.add_argument("--irf-fn", default="hayami")
     p.add_argument("--out", required=True, help="Where to save (y_obs, y_pred) as a netCDF")
+    p.add_argument("--save-stats-path", default=None,
+                   help="If given, persist the x_mean/x_std/y_std this run actually used "
+                        "(data.save_stats) -- whether loaded from --stats-path or computed live "
+                        "from this run's own data -- so a later run_predict.py can load the same "
+                        "frozen artifact instead of predicting against un-frozen stats (see "
+                        "README.md's normalization-stats gap, §5).")
     return p.parse_args()
 
 
@@ -92,6 +98,10 @@ def main():
               "run's own data (matches Analysis.ipynb's current behavior; see README.md).")
         x_mean, x_std = data.compute_dynamic_stats(x_ds)
         y_std = data.compute_discharge_std(y_aligned)
+
+    if args.save_stats_path:
+        print(f"Saving normalization stats used this run -> {args.save_stats_path}")
+        data.save_stats(args.save_stats_path, x_mean, x_std, y_std)
 
     x_norm = data.normalize_forcing(x_ds, x_mean, x_std, dynamic_var)
     y_norm = data.normalize_discharge(y_aligned, y_std)

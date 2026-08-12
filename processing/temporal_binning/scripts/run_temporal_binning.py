@@ -42,6 +42,11 @@ def parse_args():
                         "conservative = precipitation (exact time-overlap redistribution)")
     p.add_argument("--time-dim", default="time")
     p.add_argument("--day-chunk", type=int, default=30, help="Days processed per chunk")
+    p.add_argument("--time-start", default=None,
+                   help="ISO date, e.g. 2014-01-02 (default: full series). Must land exactly on "
+                        "an 00:00 sample -- HiRO-ACE's raw stores start at 06:00, not 00:00, so "
+                        "the first valid day boundary is the *second* calendar day.")
+    p.add_argument("--time-end", default=None, help="ISO date, e.g. 2014-01-30 (default: full series)")
     p.add_argument("--overwrite", action="store_true", help="Allow overwriting an existing out_zarr")
     return p.parse_args()
 
@@ -53,10 +58,12 @@ def main():
     if out_path.exists() and not args.overwrite:
         raise SystemExit(f"{out_path} already exists -- pass --overwrite to replace it")
 
-    print(f"Rebinning {args.var} from {args.input_zarr} (method: {args.method}) ...")
+    time_slice = slice(args.time_start, args.time_end) if (args.time_start or args.time_end) else None
+    print(f"Rebinning {args.var} from {args.input_zarr} (method: {args.method}, "
+          f"{'full series' if time_slice is None else f'{args.time_start} to {args.time_end}'}) ...")
     write_rebinned_to_zarr(
         args.input_zarr, args.var, args.method, out_path,
-        time_dim=args.time_dim, day_chunk=args.day_chunk,
+        time_dim=args.time_dim, day_chunk=args.day_chunk, time_slice=time_slice,
     )
     print(f"Done -> {out_path}")
 

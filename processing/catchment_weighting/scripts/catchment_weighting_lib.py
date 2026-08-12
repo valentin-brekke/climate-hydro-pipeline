@@ -499,10 +499,16 @@ def assemble_dynamic_forcing(temp_da, precip_da, temp_prefix="hiroace_temp",
     -- not because the calendar choice is physically meaningful for a
     synthetic scenario run with no fixed real date to begin with (see
     hydro/pipeline/README.md's note on this).
+
+    Data variables are cast to float32 to match `dynamic_inp.zarr`'s own
+    dtype -- `temp_da`/`precip_da` come out of `apply_catchment_weights` as
+    float64 (the sparse-matrix aggregation upcasts), and `run_predict.py`
+    expects float32 like the real file.
     """
     temp_ds = unstack_bin_dim(temp_da.rename({catchment_dim: "spatial"}), temp_prefix, bin_dim)
     precip_ds = unstack_bin_dim(precip_da.rename({catchment_dim: "spatial"}), precip_prefix, bin_dim)
     combined = xr.merge([temp_ds, precip_ds])
+    combined = combined.astype("float32")
 
     if standard_calendar:
         combined = combined.convert_calendar("standard", use_cftime=False)

@@ -246,15 +246,25 @@ REBIN_METHODS = {
 # Zarr streaming
 # --------------------------------------------------------------------------
 
-def rebin_zarr(zarr_path, var, method, time_dim="time", day_chunk=30):
+def rebin_zarr(zarr_path, var, method, time_dim="time", day_chunk=30, time_slice=None):
     """Stream `var` out of a zarr store, rebinning `day_chunk` days at a
     time onto the 4h-bin daily structure. `method`: "linear" (temperature)
     or "conservative" (precipitation). Yields one (time, bin, ...) DataArray
     chunk per iteration.
+
+    `time_slice`, if given, is applied *before* rebinning (e.g. to process a
+    sub-period of a long store) -- pass a slice whose start lands exactly on
+    an 00:00 sample of the native 6-hourly series, since `valid_day_starts`
+    requires the (possibly subset) series it sees to itself start at 00:00.
+    HiRO-ACE's raw stores start at 06:00 (the first post-initial-condition
+    step), not 00:00, so an unsliced full-store run would already fail this
+    same assertion -- this isn't a new constraint, just newly reachable.
     """
     rebin_fn = REBIN_METHODS[method]
     ds = xr.open_zarr(zarr_path)
     da = ds[var]
+    if time_slice is not None:
+        da = da.sel(**{time_dim: time_slice})
     times = da[time_dim].values
     day_start_idx, _ = valid_day_starts(times)
     n_days = len(day_start_idx)
@@ -268,12 +278,12 @@ def rebin_zarr(zarr_path, var, method, time_dim="time", day_chunk=30):
 
 
 def write_rebinned_to_zarr(zarr_path, var, method, out_path, time_dim="time",
-                           day_chunk=30, verbose=True):
+                           day_chunk=30, time_slice=None, verbose=True):
     """Consume `rebin_zarr` and stream the result to a new zarr store, one
     day-chunk at a time (append-write)."""
     out_path = Path(out_path)
     n_written = 0
-    for i, chunk in enumerate(rebin_zarr(zarr_path, var, method, time_dim, day_chunk)):
+    for i, chunk in enumerate(rebin_zarr(zarr_path, var, method, time_dim, day_chunk, time_slice)):
         ds_out = chunk.to_dataset()
         ds_out.to_zarr(out_path, mode="w" if i == 0 else "a",
                         append_dim=None if i == 0 else "time")
