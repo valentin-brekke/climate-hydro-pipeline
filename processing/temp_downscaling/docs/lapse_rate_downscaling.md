@@ -184,9 +184,7 @@ in the loop yet — see Limitations.
    future use case needs finer sub-grid terrain detail (e.g. slope/aspect
    for orographic precipitation modeling), a 30 m product (Copernicus
    GLO-30 or JAXA AW3D30) would need to replace ETOPO 2022.
-6. **Precipitation needs a separate method** — not lapse-rate. A distinct
-   piece of work if pursued.
-7. **Scaling beyond a small demo window** currently relies on a Python loop
+6. **Scaling beyond a small demo window** currently relies on a Python loop
    over timesteps; installing `dask` and moving to
    `xr.apply_ufunc(..., dask="parallelized")` would parallelize this for a
    full year or the global grid.
