@@ -120,6 +120,7 @@ $PYTHON "$BASE/processing/catchment_weighting/scripts/run_assemble_dynamic_forci
     "$TEMP_CATCH" TMP2m \
     "$PRCP_CATCH" PRATEsfc \
     "$DYNAMIC_ZARR" \
+    --temp-units K --precip-units kg/m2/s \
     --overwrite
 
 echo "=== [5/5] Running checks ==="

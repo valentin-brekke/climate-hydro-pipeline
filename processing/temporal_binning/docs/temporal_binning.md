@@ -149,10 +149,18 @@ Both tables verified numerically in `temporal_binning.ipynb`, and both matrices'
 
 ## 5. Known limitations & next steps
 
-1. **Units/scale of the target `_4h_bin_N` features (rate vs. accumulated mm) still unconfirmed** —
-   inherited from the same open question in `catchment_weighting`'s docs; this module's output is a rate
-   (same units as the input), trivially convertible to accumulated mass (`rate × 4h`) once the target
-   convention is confirmed.
+1. ~~Units/scale of the target `_4h_bin_N` features (rate vs. accumulated mm) still unconfirmed~~
+   **Answered (2026-08-13): rate, not accumulated -- no `× 4h` needed.** §3 above already establishes
+   this module's own output is "the true weighted mean rate over its own span," same convention as
+   temperature's per-bin point-samples -- the only remaining gap was the unit *of* that rate: HiRO-ACE's
+   `PRATEsfc` is SI (`kg/m2/s`), confirmed against `dynamic_inp.zarr`'s real `garadar_prcp_4h_bin_*`
+   which is `mm/h` (JMA GARADAR's standard convention; no explicit `units` attr on the real file to
+   confirm this against directly, which is why `assemble_dynamic_forcing`'s magnitude assertion --
+   `processing/catchment_weighting/scripts/catchment_weighting_lib.py` -- is a real safety net here, not
+   decoration). Conversion (`× 3600`) is applied at `assemble_dynamic_forcing`, not in this module --
+   see that function's docstring for why (affine operators commute through the whole chain, so it
+   doesn't matter where the conversion happens, and assembly is the one place both temperature's
+   equivalent K-vs-degC bug and this one get fixed together).
 2. **cftime handling.** HiRO-ACE's zarr stores decode their time axis as `cftime.DatetimeJulian` objects (a
    Julian calendar), not numpy `datetime64` — `temporal_binning_lib` handles both, but any new source data
    should be spot-checked (`type(da['time'].values[0])`) if this starts erroring.

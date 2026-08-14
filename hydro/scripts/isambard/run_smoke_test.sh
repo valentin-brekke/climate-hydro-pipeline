@@ -4,7 +4,12 @@
 #SBATCH --error=/projects/u6t/vbrekke/climate-hydro-pipeline/hydro/logs/smoke_test/%x_%j.err
 #SBATCH --partition=workq
 #SBATCH --gpus=1
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
+# Bumped from 1h: leg [2/2] runs the full 8,893-node graph x 4 ensemble
+# members, sequentially, four full DiffRoute/RivTree builds+forward passes
+# -- a scale/cost never yet exercised (leg [1/2]'s only proven run so far
+# was on a 318-node training subgraph). Cheap insurance, not a sign
+# something's expected to be slow.
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --ntasks=1

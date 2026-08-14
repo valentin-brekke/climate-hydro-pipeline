@@ -133,7 +133,12 @@ def main():
     y_obs, y_pred = module.extract_train(device=device, batch_size=args.batch_size)
 
     nse = 1 - (((y_obs - y_pred) ** 2).mean("time") / y_obs.var("time"))
-    print(f"NSE median: {float(nse.median()):.4f}  (Analysis.ipynb's cached reference run: 0.9135)")
+    # nse.median() (no `dim=` -> reduces over every dim) returns a scalar-shaped
+    # xt.DataTensor, not a plain float/np.floating -- float(...) doesn't work on
+    # it (confirmed by running this: TypeError: float() argument must be a
+    # string or a real number, not 'DataTensor'). .item() is DataTensor's own
+    # scalar-extraction method (numel()==1 required, true here).
+    print(f"NSE median: {nse.median().item():.4f}  (Analysis.ipynb's cached reference run: 0.9135)")
 
     print(f"Saving predictions -> {args.out}")
     y_obs.to_dataarray().rename("y_obs").to_dataset().merge(

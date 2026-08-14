@@ -471,7 +471,65 @@ def unstack_bin_dim(da, prefix, bin_dim="bin"):
     })
 
 
-def assemble_dynamic_forcing(temp_da, precip_da, temp_prefix="hiroace_temp",
+# -- Unit conversion, to match dynamic_inp.zarr's real msm_a_temp_4h_bin_*/
+# garadar_prcp_4h_bin_* convention -----------------------------------------
+#
+# Confirmed real-data mismatch (2026-08-13): HiRO-ACE's TMP2m is Kelvin
+# (explicit `units: 'K'` attr, inherited unconverted all the way through
+# temp_downscaling/temporal_binning/catchment_weighting -- the correct
+# `lapse_rate_lib.to_celsius()` exists but is only ever called from
+# lapse_rate.ipynb's plotting cells, never from run_downscaling.py). Real
+# msm_a_temp_4h_bin_* in hydro/data/dynamic_inp.zarr has no units attr but
+# its value range ([-24.6, 35.4]) is unambiguously degC. HiRO's PRATEsfc is
+# equally unconverted: processing/temporal_binning/docs/temporal_binning.md
+# ("target-duration normalized... true weighted mean rate over its own
+# span") confirms rebin_precip_conservative's `_4h_bin_N` output is a rate,
+# same convention as temperature's per-bin point-samples -- so, like
+# temperature, only its unit (kg/m2/s, SI) needs converting, not its
+# rate-vs-accumulated nature (that was the open question in that doc's
+# §5.1, now answered: rate). Real garadar_prcp_4h_bin_* is presumably mm/h
+# (JMA's GARADAR product's standard convention; no explicit units attr to
+# confirm this against, hence the magnitude assertion below as a real
+# safety net, not decoration).
+#
+# Deliberately converted here, not upstream in temp_downscaling/
+# temporal_binning: every operator between HiRO-ACE's raw output and this
+# assembly step is affine in the data (lapse-rate correction is affine in
+# T; point-sample interpolation, conservative-overlap rebinning, and
+# catchment-area weighting are all row-stochastic weighted averages) -- a
+# scale-and-offset unit conversion commutes through the whole chain, so
+# converting here vs. upstream gives bit-comparable results. This is the
+# single point where both variables meet and the last step before
+# dynamic_inp.zarr's own schema is matched (dtype/calendar/coord names
+# already normalized here) -- units are the same kind of job. Tradeoff
+# worth knowing: this leaves every *intermediate* zarr (TMP2m_corrected.zarr,
+# TMP2m_4hbin.zarr, TMP2m_catchments.zarr, ...) still in Kelvin/kg-m2-s --
+# fine as long as nothing downstream reads those directly instead of going
+# through this function, which is true today but not enforced.
+_TEMP_UNIT_CONVERTERS = {
+    "K": lambda da: da - 273.15,
+    "degC": lambda da: da,
+}
+_PRECIP_UNIT_CONVERTERS = {
+    "kg/m2/s": lambda da: da * 3600.0,
+    "mm/h": lambda da: da,
+}
+# Public, for CLI --temp-units/--precip-units `choices=` (run_assemble_dynamic_forcing.py)
+TEMP_UNITS = tuple(_TEMP_UNIT_CONVERTERS)
+PRECIP_UNITS = tuple(_PRECIP_UNIT_CONVERTERS)
+
+
+def _convert_units(da, source_units, converters, target_label):
+    if source_units not in converters:
+        raise ValueError(f"Unknown units {source_units!r} -- expected one of {list(converters)}")
+    out = converters[source_units](da)
+    out.attrs = dict(da.attrs)
+    out.attrs["units"] = target_label
+    return out
+
+
+def assemble_dynamic_forcing(temp_da, precip_da, temp_units, precip_units,
+                              temp_prefix="hiroace_temp",
                               precip_prefix="hiroace_prcp", catchment_dim="catchment_id",
                               bin_dim="bin", standard_calendar=True):
     """Combine catchment-weighted, 4h-binned temperature and precipitation
@@ -490,6 +548,16 @@ def assemble_dynamic_forcing(temp_da, precip_da, temp_prefix="hiroace_temp",
     simply won't have that dim, which xarray Datasets tolerate fine
     (variables in one Dataset don't need matching dims).
 
+    `temp_units`/`precip_units`: required, no default on purpose -- the
+    caller must state what's actually in `temp_da`/`precip_da` (e.g. `"K"`,
+    `"kg/m2/s"` for HiRO-ACE's own raw convention) rather than this
+    function silently guessing and letting a wrong-unit field reach the
+    model unnoticed (see the unit-conversion note above this function --
+    this is exactly the bug that motivated making these required). Output
+    is always degC / mm/h, matching dynamic_inp.zarr's real
+    msm_a_temp_4h_bin_*/garadar_prcp_4h_bin_* variables. Pass `"degC"`/
+    `"mm/h"` for already-converted input (no-op, just labels `units`).
+
     `standard_calendar`: if True (default), converts a cftime/non-standard
     time axis (e.g. HiRO-ACE's Julian-calendar output, vs.
     `dynamic_inp.zarr`'s plain `datetime64[ns]`) to the standard
@@ -505,6 +573,9 @@ def assemble_dynamic_forcing(temp_da, precip_da, temp_prefix="hiroace_temp",
     float64 (the sparse-matrix aggregation upcasts), and `run_predict.py`
     expects float32 like the real file.
     """
+    temp_da = _convert_units(temp_da, temp_units, _TEMP_UNIT_CONVERTERS, "degC")
+    precip_da = _convert_units(precip_da, precip_units, _PRECIP_UNIT_CONVERTERS, "mm/h")
+
     temp_ds = unstack_bin_dim(temp_da.rename({catchment_dim: "spatial"}), temp_prefix, bin_dim)
     precip_ds = unstack_bin_dim(precip_da.rename({catchment_dim: "spatial"}), precip_prefix, bin_dim)
     combined = xr.merge([temp_ds, precip_ds])
@@ -512,6 +583,27 @@ def assemble_dynamic_forcing(temp_da, precip_da, temp_prefix="hiroace_temp",
 
     if standard_calendar:
         combined = combined.convert_calendar("standard", use_cftime=False)
+
+    # Magnitude sanity check -- loose bounds, not a physical validation, but
+    # exactly what would have caught the K/kg-m2-s unit bug this function's
+    # temp_units/precip_units params now fix, instead of it silently
+    # reaching the model. Bounds generous enough for real Japan extremes
+    # (observed real msm_a_temp_4h_bin_*: [-24.6, 35.4] degC; observed real
+    # garadar_prcp_4h_bin_*: up to 64.5 mm/h) plus headroom, tight enough
+    # that a leftover Kelvin/kg-m2-s field (order 250-290, or off by 3600x)
+    # trips it immediately.
+    for v in combined.data_vars:
+        lo, hi = float(combined[v].min()), float(combined[v].max())
+        if v.startswith(temp_prefix):
+            assert -60.0 <= lo and hi <= 60.0, (
+                f"{v}: [{lo:.2f}, {hi:.2f}] degC is far outside a plausible range -- "
+                f"check temp_units (got {temp_units!r})"
+            )
+        elif v.startswith(precip_prefix):
+            assert lo >= -1.0 and hi <= 300.0, (
+                f"{v}: [{lo:.4g}, {hi:.4g}] mm/h is far outside a plausible range -- "
+                f"check precip_units (got {precip_units!r})"
+            )
 
     return combined
 

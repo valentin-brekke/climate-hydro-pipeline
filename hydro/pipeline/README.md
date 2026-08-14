@@ -2,6 +2,8 @@
 
 **Status:** pure data layer fully implemented and verified against real data. `diffhydro`/`xtensor`-touching layer implemented against the actual library source, and confirmed — by actually cloning and `pip install -e`-ing all three repos locally on 2026-08-11 — that it **cannot run on macOS at all**, for a specific, confirmed reason (§4.1), not just "untested." Needs Isambard (or another Linux+CUDA/ROCm machine). See §4 for the full breakdown.
 
+**Update (2026-08-13):** now actually run on Isambard. `run_predict.py` passed end-to-end at full scale (all 8,893 catchments, 4 HiRO-ACE ensemble members). `run_evaluate.py` did not reproduce the cached NSE — see §4.2 for what that run found and fixed, and what's still open.
+
 ## 1. What this is
 
 `hydro/modified_code/Analysis.ipynb` is Tristan's demo notebook: load the pretrained Japan hydro model + historical MSM/GARADAR forcing + real discharge, run inference, compute NSE, plot. It mixes four concerns (data loading, model/checkpoint, evaluation, an interactive holoviews/geoviews/panel dashboard) through shared notebook-global variables, and duplicates a chunk of `exp_helpers.py`'s own loading logic with a hand-diverged "local data" variant.
@@ -42,7 +44,7 @@ Visualization (`AnalysisPlot`, holoviews/geoviews/panel) stays a notebook, delib
 
 - **`data.py`, all of it.** Every function run end-to-end against the real files in `hydrological_model/Japan_model/data/`:
   - `select_training_nodes` reproduces **exactly** `Analysis.ipynb`'s cached output of **318 training nodes** (a non-trivial computation — dam-ancestor traversal via `nx.ancestors` + an explicit exclusion list — matching this exactly is strong evidence the ported logic is faithful, not a coincidence).
-  - `align_discharge_to_nodes` reproduces **962** gauged catchments, not the notebook's cached **877**. Investigated directly (not just noted): confirmed the `kp.pkl` ↔ `discharges.zarr` gauge-ID join is 100% complete (all 1089 raw discharge gauge IDs are found in `kp`), and that a strict `.sel(time=x_time)` vs. a lenient `.isin()`-based time filter give identical results (962 either way) — so this isn't an alignment-logic bug on this end. Most likely explanation: the underlying data files have been regenerated/extended since that notebook was last executed and cached (entirely plausible for working project files). **Worth actually confirming** — either by re-running `Analysis.ipynb` itself against the current data, or cross-checking with Tristan — before trusting `run_evaluate.py`'s output count without comment.
+  - `align_discharge_to_nodes` reproduces **962** gauged catchments, not the notebook's cached **877**. **Resolved 2026-08-13 — not data drift, a previous guess here was wrong.** Ran the notebook's own un-ported `data_loading_local()` verbatim against today's data (`hydro/scripts/isambard/reproduce_analysis_data_loading.py`, job 6006077) and it *also* prints 877, so the underlying data hasn't changed. The real mechanism is in `define_splits`: its `basin_residual_nodes` (river basins that have a gauge but zero training-eligible nodes anywhere in them — e.g. entirely downstream of a dam) is computed and then never used. Those basins never get assigned to a CV fold, so their gauges never appear in any fold's `te`, and the notebook's own "877 gauged nodes" print is `len(union of te across folds)` — a narrower, split-derived quantity, not `len(kp_f)`. `data.py`'s `align_discharge_to_nodes` reports `len(kp_f)` directly (962), which is what the notebook's own `all_nodes = kp.index` equals *before* `define_splits` runs. Both numbers are correct for what they measure; `basin_residual_nodes` being dead code is a real gap in the *original* `exp_helpers.py` split logic, ported here verbatim, not introduced by this port. **Confirmed inert either way:** the notebook's `all_nodes`/877 is printed once and never used again — the actual NSE cell (cell 7) builds its dataset from `tr_nodes` only, so this gap doesn't touch model scoring in either codepath.
   - `normalize_forcing`/`normalize_discharge`: confirmed per-variable mean≈0/std≈1 after normalization (std for precip bins comes out to ~0.9998, not exactly 1.0 — traced to the same `fillna(0)`-after-normalizing step the original applies, not a bug).
   - Stats save/load roundtrip (`save_stats`/`load_stats`) confirmed exact.
 
@@ -94,6 +96,20 @@ Smaller things worth a first-run sanity check, called out inline in `tensors.py`
 - Whether `RivTree`'s `param_df` needs pre-filtering to the (sub)graph's own nodes, or handles that internally — passed in full, matching `Analysis.ipynb`'s own (working) call pattern exactly, rather than guessing at pre-filtering.
 - `run_predict.py`'s de-normalization of the model's output (`o * y_std`) — reasonable given the architecture, but not independently confirmed against a real run.
 
+### 4.2 First real Isambard run (2026-08-13) — what it found
+
+Two bugs, found and fixed before/via actually running:
+
+- **`run_evaluate.py`'s `float(nse.median())` crash** — `xt.DataTensor.median()` returns a scalar-shaped `DataTensor`, not a plain float; needs `.item()`. Fixed (~line 136). Before crashing, that first run confirmed 962 gauged/318 training-eligible catchments and that the `diffhydro`/`xtensor`/`triton` stack mechanically works end to end for the first time ever, on a 318-node training subgraph.
+- **`run_predict.py`'s `normalize_forcing` stats-alignment bug** — frozen stats are indexed by real-data variable names (`msm_a_temp_*`/`garadar_prcp_*`), but HiRO-ACE forcing uses `hiroace_temp_*`/`hiroace_prcp_*` (deliberately, §3) — completely disjoint label sets, which xarray does *not* error on (confirmed directly): arithmetic between DataArrays with zero overlapping labels silently produces an empty dim. Fixed by adding `--stats-source-keys` and a positional (not label) relabel before normalizing.
+
+Result of the full run (job 6006195):
+
+- **`run_predict.py`: PASS.** Full 8,893-catchment graph × 4 HiRO-ACE ensemble members, first time ever run at this scale, all finite.
+- **`run_evaluate.py`: FAIL.** `non-finite values in y_obs`; NSE median **0.3894** vs. the cached **0.9135**.
+
+This is *not* a methodology mismatch — directly confirmed by reading `Analysis.ipynb` itself (cells 6-7): the notebook loads a **pretrained** checkpoint and runs one `extract_train` pass over `tr_nodes`, exactly what `run_evaluate.py` does. (`exp_helpers.py`'s `define_splits`/`run_experiments` 10-fold retraining loop is a separate tool the notebook never calls for scoring — an earlier guess that the gap was explained by that was wrong.) The 877-vs-962 gap (§4) doesn't explain it either — confirmed inert. So the NSE drop + non-finite `y_obs` is still a real, open discrepancy. Leading suspect: §5's normalization-stats gap. See §6.
+
 ## 5. The normalization-stats gap (found while designing this, worth fixing regardless of this refactor)
 
 `data_loading_local()` computes `x_mean`/`x_std`/`y_std` **live**, from whatever's currently loaded — there's no persisted normalization artifact from training. That's invisible as long as you always load the *same* historical dataset the notebook already uses. It stops being invisible the moment genuinely different-distributed data is fed in (HiRO-ACE's climatology won't match 2015–2021 MSM/GARADAR's exactly) — the model would then see inputs normalized against a different reference than it was trained on, **with nothing erroring to flag it**. A silent distribution-shift bug, not a crash.
@@ -104,9 +120,10 @@ Smaller things worth a first-run sanity check, called out inline in `tensors.py`
 
 ## 6. Next steps
 
-1. **Requires Isambard (or another Linux + CUDA/ROCm machine) — confirmed, not assumed (§4.1).** Run `run_evaluate.py` there against the same historical data `Analysis.ipynb` uses — first check should be reproducing NSE median ≈ 0.9135 (the cached reference), and resolving the 877-vs-962 gauge-count question.
-2. Compute and freeze the real training-time normalization stats (§5).
-3. Once `processing/catchment_weighting` + `processing/temporal_binning`'s final-assembly gap is filled (a `dynamic_inp.zarr`-shaped store with `hiroace_temp_4h_bin_0..5`/`hiroace_prcp_4h_bin_0..5` variables), run `run_predict.py` against it — first real end-to-end HiRO-ACE → hydro-model run.
+1. ~~Requires Isambard...~~ **Done (§4.2, 2026-08-13).** `run_evaluate.py` did not reproduce NSE ≈ 0.9135 (got 0.3894, non-finite `y_obs`); the 877-vs-962 gauge-count question is resolved and confirmed to not be the cause.
+2. **Current priority:** compute and freeze the real training-time normalization stats (§5) and re-run `run_evaluate.py --stats-path ...` against them, instead of the current live-computed-from-today's-data stats. Leading suspect for the NSE gap/non-finite `y_obs`, since it's an already-known latent issue in the *original* shared code, not a guess.
+3. If that doesn't resolve it, dig into `y_obs`'s non-finite values directly — which catchments, and why (candidates not yet ruled out: a real gap between this repo's `hydro/data/` and whatever `default.pt` was actually trained on).
+4. ~~Once `processing/catchment_weighting` + `processing/temporal_binning`'s final-assembly gap is filled...~~ **Also done, at smoke scale (§4.2).** `run_predict.py` ran end-to-end against real HiRO-ACE-derived forcing (`hiroace_dynamic_ic0000_smoke.zarr`) — first real HiRO-ACE → hydro-model run, passed cleanly.
 
 ## 7. Local environment, for reference
 

@@ -188,3 +188,26 @@ in the loop yet — see Limitations.
    over timesteps; installing `dask` and moving to
    `xr.apply_ufunc(..., dask="parallelized")` would parallelize this for a
    full year or the global grid.
+8. **Output stays in Kelvin all the way to `hiroace_dynamic*.zarr` -- was
+   silent, now fixed at the assembly step, not here.** `to_celsius()`
+   (`lapse_rate_lib.py`) is correct but was only ever called from
+   `lapse_rate.ipynb`'s plotting cells -- `run_downscaling.py`, the
+   production CLI, never
+   converts, so `TMP2m_corrected.zarr` and everything downstream of it
+   (`temporal_binning`, `catchment_weighting`) stayed in Kelvin, silently
+   mismatched against `dynamic_inp.zarr`'s real `msm_a_temp_4h_bin_*`
+   (degC). Found 2026-08-13 comparing real vs. HiRO-ACE-derived value
+   ranges directly ([-24.6, 35.4] vs. an explicit `units: 'K'` attr,
+   [255, 289]) -- would have fed the model out-of-distribution input with
+   no crash and no warning. Fixed at `assemble_dynamic_forcing`
+   (`processing/catchment_weighting/scripts/catchment_weighting_lib.py`)
+   instead of here: every operator between this module's output and that
+   assembly step is affine, so a scale/offset conversion commutes through
+   the chain regardless of where it's applied, and assembly is the one
+   place both temperature and precipitation's own equivalent unit bug
+   (kg/m2/s vs. `dynamic_inp.zarr`'s real mm/h -- see
+   `processing/temporal_binning/docs/temporal_binning.md` §5) get fixed
+   together. Tradeoff: this module's own intermediate output
+   (`TMP2m_corrected.zarr`) stays in Kelvin -- fine as long as nothing
+   reads it directly instead of going through `assemble_dynamic_forcing`,
+   which is true today but not enforced.

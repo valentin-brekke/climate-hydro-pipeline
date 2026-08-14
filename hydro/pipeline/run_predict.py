@@ -80,6 +80,12 @@ def parse_args():
     p.add_argument("--stats-path", required=True,
                    help="Frozen normalization stats (data.save_stats output, computed once from "
                         "the original historical training data -- see README.md).")
+    p.add_argument("--stats-source-keys", nargs="+", default=data.DEFAULT_DYNAMIC_KEYS,
+                   help="data.DYNAMIC_VAR_DICT keys --stats-path's x_mean/x_std were actually "
+                        "computed from (e.g. the real msm_a_temp_4h_bin/garadar_prcp_4h_bin the "
+                        "model was trained on). Must expand to the same length/bin structure as "
+                        "--dynamic-keys -- see main()'s comment on why this positional "
+                        "substitution, not name-matching, is needed.")
     p.add_argument("--target-nodes-file", default=None,
                    help="Optional text file, one catchment/node ID per line, to restrict "
                         "predictions to. Defaults to every catchment in the graph.")
@@ -153,6 +159,28 @@ def main():
 
     print(f"Loading frozen normalization stats from {args.stats_path} ...")
     x_mean, x_std, y_std = data.load_stats(args.stats_path)
+
+    # The frozen stats were computed against real historical forcing variable names
+    # (--stats-source-keys, e.g. msm_a_temp_4h_bin/garadar_prcp_4h_bin) -- named
+    # differently from --dynamic-keys' HiRO-ACE variables on purpose (README.md's
+    # "evaluate vs predict" note: a separate prefix so HiRO-ACE-derived forcing is
+    # never mistaken for real MSM/GARADAR observations). But data.normalize_forcing
+    # aligns x_mean/x_std to the forcing by coordinate *label* (xarray arithmetic
+    # aligns on shared "variable" values) -- with completely disjoint label sets
+    # that doesn't raise, it silently produces an empty (0-length) "variable" dim
+    # (confirmed directly, before this could reach a real run). The frozen stats
+    # and --dynamic-keys are meant to be positionally interchangeable (same
+    # bin_0..5 structure, temp-then-precip order, per DYNAMIC_VAR_DICT) -- so
+    # relabel the stats' own "variable" coordinate onto --dynamic-keys' names,
+    # position for position, instead of relying on name-matching.
+    stats_source_var = data.expand_dynamic_keys(args.stats_source_keys)
+    assert len(stats_source_var) == len(dynamic_var), (
+        f"frozen stats has {len(stats_source_var)} variables ({args.stats_source_keys}) but "
+        f"--dynamic-keys expands to {len(dynamic_var)} ({args.dynamic_keys}) -- can't "
+        f"positionally substitute one for the other"
+    )
+    x_mean = x_mean.sel(variable=stats_source_var).assign_coords(variable=dynamic_var)
+    x_std = x_std.sel(variable=stats_source_var).assign_coords(variable=dynamic_var)
 
     print(f"Loading forcing from {args.forcing_zarr} (keys: {args.dynamic_keys}) ...")
     x_ds_full = data.load_forcing_dataset(args.forcing_zarr, dynamic_var)

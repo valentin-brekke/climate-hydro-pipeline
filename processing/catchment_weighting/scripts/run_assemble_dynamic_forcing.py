@@ -9,14 +9,15 @@ Example:
     python run_assemble_dynamic_forcing.py \\
         ../data/TMP2m_catchments.zarr TMP2m \\
         ../data/PRATEsfc_catchments.zarr PRATEsfc \\
-        ../data/hiroace_dynamic.zarr
+        ../data/hiroace_dynamic.zarr \\
+        --temp-units K --precip-units kg/m2/s
 """
 import argparse
 from pathlib import Path
 
 import xarray as xr
 
-from catchment_weighting_lib import write_dynamic_forcing_zarr
+from catchment_weighting_lib import write_dynamic_forcing_zarr, TEMP_UNITS, PRECIP_UNITS
 
 
 def parse_args():
@@ -29,6 +30,13 @@ def parse_args():
     p.add_argument("precip_zarr", help="catchment_weighting output zarr for precipitation")
     p.add_argument("precip_var", help="Variable name inside precip_zarr")
     p.add_argument("out_zarr", help="Path to write the combined, assembled zarr store")
+    p.add_argument("--temp-units", required=True, choices=TEMP_UNITS,
+                   help="Units temp_var is actually in (HiRO-ACE's TMP2m: K). No default on "
+                        "purpose -- a wrong/omitted value here is exactly the bug this flag "
+                        "exists to prevent (see catchment_weighting_lib.py's unit-conversion note).")
+    p.add_argument("--precip-units", required=True, choices=PRECIP_UNITS,
+                   help="Units precip_var is actually in (HiRO-ACE's PRATEsfc: kg/m2/s). "
+                        "No default, same reasoning as --temp-units.")
     p.add_argument("--temp-prefix", default="hiroace_temp")
     p.add_argument("--precip-prefix", default="hiroace_prcp")
     p.add_argument("--overwrite", action="store_true")
@@ -48,6 +56,7 @@ def main():
 
     write_dynamic_forcing_zarr(
         temp_da, precip_da, out_path,
+        temp_units=args.temp_units, precip_units=args.precip_units,
         temp_prefix=args.temp_prefix, precip_prefix=args.precip_prefix,
     )
     print(f"Done -> {out_path}")
