@@ -10,9 +10,16 @@ hiroace/
 ├── fetch_weights.sh        # pulls ACE2S.ckpt, HiRO.ckpt into $HIROACE_DATA_DIR
 ├── fetch_forcing_data.sh   # pulls forcing_data/, initial_conditions/
 ├── data/                   # gitignored — weights + forcing_data/ + initial_conditions/
+├── outputs/                # gitignored — real run output, e.g. with_temp/{ace2s,hiro}/
 ├── configs/isambard/       # inference configs
 └── scripts/isambard/       # sbatch submission scripts
 ```
+
+`outputs/` holds real inference output, not demo/synthetic data — e.g. `with_temp/`
+is the weekend-of-2026-08-08/09 ensemble run (2 ACE2S members × 10 simulated years
+each → 8 HiRO members, 142 GB total; see `RUN_SUMMARY_2026-08-08_09.md`). Like
+`data/`, only present on whatever machine actually ran the jobs (Isambard) — not
+fetched or mirrored anywhere else.
 
 `hiroace/data/` is the default `$HIROACE_DATA_DIR` on Isambard — run
 `HIROACE_DATA_DIR=hiroace/data ./fetch_weights.sh` (and the forcing-data

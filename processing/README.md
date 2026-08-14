@@ -28,30 +28,31 @@ HiRO-ACE raw grid (6-hourly, 1deg ACE2S + 3km HiRO precip)
 | `temporal_binning/` | Built and verified against real data | `temporal_binning/docs/temporal_binning.md` |
 | `catchment_weighting/` | Built and verified against real data, including final assembly | `catchment_weighting/docs/catchment_weighting.md` |
 | `hydro/pipeline/` (data layer) | Built and verified against real data | `../hydro/pipeline/README.md` |
-| `hydro/pipeline/` (model layer) | Built against confirmed API contracts; **cannot run on macOS** (needs Isambard/Linux+CUDA — confirmed, not just untested) | `../hydro/pipeline/README.md` §4 |
+| `hydro/pipeline/` (model layer) | Now run on Isambard (2026-08-13): `run_predict.py` passes end-to-end at full scale; `run_evaluate.py` does not yet reproduce the reference NSE (open issue) | `../hydro/pipeline/README.md` §4.2 |
 
 ## Open items, by category
 
-### Needs an Isambard (or Linux+CUDA/ROCm) run — nothing more to do locally
-- [ ] Confirm `run_evaluate.py` actually runs; reproduce NSE median ≈ 0.9135 (the cached `Analysis.ipynb` reference).
-- [ ] Resolve the 877-vs-962 gauged-catchment discrepancy (`hydro/pipeline/README.md` §4) — likely a stale local data snapshot, not a logic bug, but unconfirmed.
-- [ ] Compute and freeze the real training-time normalization stats (`data.compute_dynamic_stats`/`save_stats`, run once against the original historical data) — see the normalization-stats note in `hydro/pipeline/README.md` §5.
-- [ ] First real `run_predict.py` run: confirm the dummy-`y` workaround behaves as expected (`hydro/pipeline/README.md` §4.1's "genuine design risk" note).
-- [ ] Minor unconfirmed assumptions flagged inline in `hydro/pipeline/tensors.py`/`run_predict.py`: whether `RivTree`'s `param_df` needs pre-filtering, and the `o * y_std` de-normalization.
+### Ran on Isambard (2026-08-13) — see `hydro/pipeline/README.md` §4.2 for the full account
+- [x] `run_evaluate.py` runs, but does **not** reproduce NSE ≈ 0.9135 — got 0.3894, plus non-finite `y_obs`. Confirmed this isn't a methodology mismatch (matches `Analysis.ipynb`'s own pretrained-checkpoint-+-single-pass flow exactly, not a different CV-aggregated number). **Still open** — leading suspect is the normalization-stats gap below.
+- [x] 877-vs-962 gauged-catchment discrepancy — **resolved, not a bug.** `define_splits`'s dead `basin_residual_nodes` (basins with a real gauge but zero training-eligible nodes never get assigned to a CV fold, so their gauges never reach the notebook's `877` figure). Confirmed via direct reproduction against current data — not stale data, as previously guessed. Confirmed inert either way, doesn't touch model scoring.
+- [x] First real `run_predict.py` run: dummy-`y` workaround confirmed working mechanically (full 8,893-catchment graph × 4 ensemble members, all finite). **Caveat:** that run's forcing (`hiroace_dynamic_ic0000_smoke.zarr`) predates the unit-conversion fix below — almost certainly still in Kelvin/kg·m⁻²·s⁻¹ at the time, so "all finite" isn't the same as "physically sensible input." Needs a re-run against a regenerated zarr before this counts as validated.
+- [ ] Compute and freeze the real training-time normalization stats (`data.compute_dynamic_stats`/`save_stats`, run once against the original historical data) — **current priority**, leading suspect for the NSE gap above.
+- [ ] Minor unconfirmed assumptions flagged inline in `hydro/pipeline/tensors.py`/`run_predict.py`: whether `RivTree`'s `param_df` needs pre-filtering, and the `o * y_std` de-normalization — indirectly supported by `run_predict.py`'s clean, well-formed run, but not independently confirmed.
 
 ### Code gaps — done
 - [x] **Final assembly into `dynamic_inp.zarr`'s schema** (was the main open item) — `catchment_weighting_lib.py`'s `assemble_dynamic_forcing`/`write_dynamic_forcing_zarr`, CLI: `run_assemble_dynamic_forcing.py`. Verified against real data 2026-08-11.
 - [x] Variable naming (`hiroace_temp_4h_bin_*`/`hiroace_prcp_4h_bin_*`, registered in `hydro/pipeline/data.py`'s `DYNAMIC_VAR_DICT`).
 - [x] Ensemble handling (`run_predict.py` loops over an `ensemble` dim if present) — implemented, not yet run.
 - [x] Calendar conversion (HiRO-ACE's cftime/Julian → plain `datetime64[ns]`) — done as part of the assembly step (`assemble_dynamic_forcing`'s `standard_calendar=True`). See "does the calendar matter?" below.
+- [x] **Unit conversion** (2026-08-13/14): HiRO-ACE's `TMP2m` (Kelvin) and `PRATEsfc` (kg/m²/s) were reaching `assemble_dynamic_forcing` unconverted — silently out-of-distribution against `dynamic_inp.zarr`'s real degC/mm-h convention, with nothing erroring to flag it. Fixed with required `--temp-units`/`--precip-units` args plus a magnitude sanity assertion (`processing/catchment_weighting/scripts/catchment_weighting_lib.py`). **Not yet reflected in any existing output zarr** — see the `run_predict.py` caveat above.
 
 ### Still open, no code written yet
 - [ ] `surface_temperature` isn't covered — only `TMP2m`.
 - [ ] No independent physical validation of HiRO-ACE-derived catchment values against real MSM/GARADAR climatology.
 
 ### Data gaps — not fixable by writing more code
-- [ ] No real long HiRO-ACE precipitation trajectory exists locally yet — only the 2-timestep demo file (`Japan_two_steps_20230101_0000_0600.zarr`). Everything precip-related has only been validated against a synthetic stand-in. Someone needs to actually run HiRO for a real multi-day (ideally multi-year, matching the "synthetic scenario ensemble" framing) trajectory before `run_predict.py` has real input.
-- [ ] Nothing's been run at realistic scale (a real multi-year, multi-ensemble-member run) — everything so far is demo-window/small-subset scale.
+- [x] ~~No real long HiRO-ACE precipitation trajectory exists locally yet~~ **No longer true.** A real 10-year, 2-ensemble-member ACE2S→HiRO run completed the weekend of 2026-08-08/09 (`hiroace/RUN_SUMMARY_2026-08-08_09.md`) — `hiroace/outputs/with_temp/{ace2s,hiro}/*_ic0000.zarr`/`*_ic0001.zarr`, 142 GB, real HiRO-downscaled precipitation included, not a synthetic stand-in. Lives on Isambard's project storage only (`/projects/u6t/vbrekke/...`) — not fetched or mirrored anywhere else, so this is only true when actually connected to Isambard. A 28-day slice of it has already been run through the full `temp_downscaling → temporal_binning → catchment_weighting → assembly` chain (`processing/scripts/isambard/run_smoke_test.sh`) and through `run_predict.py` — see the caveat above about that specific output predating the unit-conversion fix.
+- [ ] Nothing's been run at *hydro-model* scale against the **full** 10-year/multi-ensemble-member trajectory yet — everything through `run_predict.py` so far is still the 28-day smoke window, not the full 10 years.
 
 ## Does the cftime/Julian-vs-Gregorian calendar difference actually matter?
 

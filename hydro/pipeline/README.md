@@ -105,8 +105,10 @@ Two bugs, found and fixed before/via actually running:
 
 Result of the full run (job 6006195):
 
-- **`run_predict.py`: PASS.** Full 8,893-catchment graph × 4 HiRO-ACE ensemble members, first time ever run at this scale, all finite.
+- **`run_predict.py`: PASS.** Full 8,893-catchment graph × 4 HiRO-ACE ensemble members, first time ever run at this scale, all finite. **Caveat found afterward:** the forcing it consumed (`hiroace_dynamic_ic0000_smoke.zarr`, built 2026-08-12) predates the unit-conversion fix below — it was almost certainly still in Kelvin/kg·m⁻²·s⁻¹ at the time, not the degC/mm-h `dynamic_inp.zarr` expects. "All finite" only means the code path ran; it doesn't mean the model saw physically sensible input. Needs a re-run against a regenerated zarr (`processing/scripts/isambard/run_smoke_test.sh`, which already has the fix) before this counts as a validated pass.
 - **`run_evaluate.py`: FAIL.** `non-finite values in y_obs`; NSE median **0.3894** vs. the cached **0.9135**.
+
+**Unrelated fix landed the same day, downstream in `processing/`:** HiRO-ACE's raw temperature/precipitation were reaching `assemble_dynamic_forcing` in their native units (K, kg/m²/s) instead of being converted to match `dynamic_inp.zarr`'s real degC/mm-h convention — see `processing/README.md`'s "Code gaps" and `processing/catchment_weighting/docs/catchment_weighting.md`. Fixed there, not here; noted because it's the reason the `run_predict.py` caveat above exists.
 
 This is *not* a methodology mismatch — directly confirmed by reading `Analysis.ipynb` itself (cells 6-7): the notebook loads a **pretrained** checkpoint and runs one `extract_train` pass over `tr_nodes`, exactly what `run_evaluate.py` does. (`exp_helpers.py`'s `define_splits`/`run_experiments` 10-fold retraining loop is a separate tool the notebook never calls for scoring — an earlier guess that the gap was explained by that was wrong.) The 877-vs-962 gap (§4) doesn't explain it either — confirmed inert. So the NSE drop + non-finite `y_obs` is still a real, open discrepancy. Leading suspect: §5's normalization-stats gap. See §6.
 

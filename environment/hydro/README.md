@@ -24,5 +24,7 @@ pip install -e /projects/u6t/vbrekke/xtensor
 `DiffHydro`/`DiffRoute`/`xtensor` are actively developed sibling repos,
 installed editable rather than pinned — expect them to move.
 
-Runs as an interactive Jupyter session (`sbatch submit_jupyter_user_session_i-aip2.sh`
-→ SSH tunnel), not batch inference jobs like `hiroace/`.
+Interactive exploration runs as a Jupyter session (`sbatch submit_jupyter_user_session_i-aip2.sh`
+→ SSH tunnel). Batch jobs work too, same pattern as `hiroace/` — see
+`hydro/scripts/isambard/run_smoke_test.sh` (`sbatch`), run for the first time
+2026-08-13.
