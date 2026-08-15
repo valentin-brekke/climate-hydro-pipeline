@@ -2,7 +2,7 @@
 
 **Status:** pure data layer fully implemented and verified against real data. `diffhydro`/`xtensor`-touching layer implemented against the actual library source, and confirmed — by actually cloning and `pip install -e`-ing all three repos locally on 2026-08-11 — that it **cannot run on macOS at all**, for a specific, confirmed reason (§4.1), not just "untested." Needs Isambard (or another Linux+CUDA/ROCm machine). See §4 for the full breakdown.
 
-**Update (2026-08-13):** now actually run on Isambard. `run_predict.py` passed end-to-end at full scale (all 8,893 catchments, 4 HiRO-ACE ensemble members). `run_evaluate.py` did not reproduce the cached NSE — see §4.2 for what that run found and fixed, and what's still open.
+**Update (2026-08-13):** now actually run on Isambard. `run_predict.py` passed end-to-end at full scale (all 8,893 catchments, 4 HiRO-ACE ensemble members, but very limited time range - few days ?). `run_evaluate.py` did not reproduce the cached NSE — see §4.2 for what that run found and fixed, and what's still open.
 
 ## 1. What this is
 
