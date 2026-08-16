@@ -39,13 +39,22 @@ BASE=/projects/u6t/vbrekke/climate-hydro-pipeline
 PYTHON=/projects/u6t/vbrekke/envs/japan-model/bin/python
 
 IC=${IC:-ic0000}
-TAG=smoke
+TAG=${TAG:-smoke}
 TIME_START=${TIME_START:-2014-01-02}
 TIME_END=${TIME_END:-2014-01-30}
 # TIME_START must land exactly on an 00:00 sample: HiRO-ACE's raw stores
 # start at 06:00 (the first post-initial-condition step), so the first
 # valid day boundary is 2014-01-02, not 2014-01-01 -- see
 # temporal_binning_lib.rebin_zarr's docstring.
+
+# Optional: collapse HiRO's 4-member precipitation ensemble down to one
+# member before rebinning (e.g. for a full-duration, single-member run --
+# cheaper than carrying all 4 through, and simpler to debug since a failure
+# can't be an ensemble-handling bug). Unset (default) = keep all members,
+# same behavior as before this was added. Temperature has no ensemble dim
+# at all (ACE2S's 2 ICs are separate zarr stores, not a dim within one), so
+# this only ever applies to the precip step below.
+HIRO_MEMBER=${HIRO_MEMBER:-}
 
 ACE2S_ZARR=$BASE/hiroace/outputs/with_temp/ace2s/output_6hourly_ace2s_${IC}.zarr
 HIRO_ZARR=$BASE/hiroace/outputs/with_temp/hiro/Japan_10yr_20140101_20231231_${IC}.zarr
@@ -75,7 +84,7 @@ if [[ ! -f "$DEM_CACHE" ]]; then
 fi
 
 echo "=== Config ==="
-echo "IC=$IC  window=$TIME_START..$TIME_END"
+echo "IC=$IC  window=$TIME_START..$TIME_END  TAG=$TAG  HIRO_MEMBER=${HIRO_MEMBER:-<all>}"
 echo "python: $PYTHON"
 echo
 
@@ -99,6 +108,7 @@ $PYTHON "$BASE/processing/temporal_binning/scripts/run_temporal_binning.py" \
     "$HIRO_ZARR" "$PRCP_BINNED" \
     --var PRATEsfc --method conservative \
     --time-start "$TIME_START" --time-end "$TIME_END" \
+    ${HIRO_MEMBER:+--ensemble-index "$HIRO_MEMBER"} \
     --overwrite
 
 echo "=== [3/5] Catchment weighting: temperature ==="
@@ -131,6 +141,7 @@ $PYTHON "$BASE/processing/scripts/isambard/check_smoke_test.py" \
     --temp-binned "$TEMP_BINNED" --prcp-binned "$PRCP_BINNED" \
     --temp-catchments "$TEMP_CATCH" --prcp-catchments "$PRCP_CATCH" \
     --dynamic-zarr "$DYNAMIC_ZARR" \
+    ${HIRO_MEMBER:+--ensemble-index "$HIRO_MEMBER"} \
     --basins "$BASINS" \
     --reference-dynamic-inp "$REFERENCE_DYNAMIC_INP"
 

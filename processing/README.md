@@ -24,7 +24,7 @@ HiRO-ACE raw grid (6-hourly, 1deg ACE2S + 3km HiRO precip)
 
 | Stage | Status | Detail |
 |---|---|---|
-| `temp_downscaling/` | MVP built, tested on a 10-day demo window | `temp_downscaling/docs/lapse_rate_downscaling.md` |
+| `temp_downscaling/` | MVP built; now run at full 10-year scale on Isambard (2026-08-15) | `temp_downscaling/docs/lapse_rate_downscaling.md` |
 | `temporal_binning/` | Built and verified against real data | `temporal_binning/docs/temporal_binning.md` |
 | `catchment_weighting/` | Built and verified against real data, including final assembly | `catchment_weighting/docs/catchment_weighting.md` |
 | `hydro/pipeline/` (data layer) | Built and verified against real data | `../hydro/pipeline/README.md` |
@@ -52,7 +52,8 @@ HiRO-ACE raw grid (6-hourly, 1deg ACE2S + 3km HiRO precip)
 
 ### Data gaps — not fixable by writing more code
 - [x] ~~No real long HiRO-ACE precipitation trajectory exists locally yet~~ **No longer true.** A real 10-year, 2-ensemble-member ACE2S→HiRO run completed the weekend of 2026-08-08/09 (`hiroace/RUN_SUMMARY_2026-08-08_09.md`) — `hiroace/outputs/with_temp/{ace2s,hiro}/*_ic0000.zarr`/`*_ic0001.zarr`, 142 GB, real HiRO-downscaled precipitation included, not a synthetic stand-in. Lives on Isambard's project storage only (`/projects/u6t/vbrekke/...`) — not fetched or mirrored anywhere else, so this is only true when actually connected to Isambard. A 28-day slice of it has already been run through the full `temp_downscaling → temporal_binning → catchment_weighting → assembly` chain (`processing/scripts/isambard/run_smoke_test.sh`) and through `run_predict.py` — see the caveat above about that specific output predating the unit-conversion fix.
-- [ ] Nothing's been run at *hydro-model* scale against the **full** 10-year/multi-ensemble-member trajectory yet — everything through `run_predict.py` so far is still the 28-day smoke window, not the full 10 years.
+- [x] **Full 10-year window run through the processing chain** (2026-08-15, job 6016579, `TAG=full10yr_m0`, `ic0000`/member 0, `TIME_START=2014-01-02`..`TIME_END=2023-12-31`): steps [1/5]-[4/5] (temp downscaling → temporal binning → catchment weighting → dynamic-forcing assembly) all completed successfully, writing full 10-year `hiroace_dynamic_ic0000_full10yr_m0.zarr` and intermediates. Step [5/5] (`check_smoke_test.py`) then OOM'd at the 64G job limit — not a pipeline bug, but a memory bug in the check script itself: without `dask` in the `japan-model` env, its check-3 `.min()`/`.max()` calls materialized each full 10-year array (~24 GB) in one shot instead of streaming. Fixed by chunking that scan the same way `lapse_rate_lib.lapse_rate_correct_zarr` already streams writes (`processing/scripts/isambard/check_smoke_test.py`'s `_streamed_min_max`, `--time-chunk`, default 50 — measured peak RSS ~1.2 GB against the full10yr TMP2m grid). A lightweight standalone verification job (`processing/scripts/isambard/check_only.sh`, re-runs check_smoke_test.py's checks alone against the already-written output, no reprocessing) is running to confirm all 4 checks pass at this scale.
+- [ ] Nothing's been run at *hydro-model* scale (`run_predict.py`/`run_evaluate.py`) against the full 10-year output yet — the processing chain above now covers the full 10 years, but `run_predict.py` itself has only ever been pointed at the 28-day smoke window.
 
 ## Does the cftime/Julian-vs-Gregorian calendar difference actually matter?
 

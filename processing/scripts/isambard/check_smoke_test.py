@@ -84,7 +84,38 @@ def parse_args():
     p.add_argument("--basins", required=True)
     p.add_argument("--reference-dynamic-inp", required=True,
                    help="A real dynamic_inp.zarr to diff schema/catchment-IDs against")
+    p.add_argument("--ensemble-dim", default="ensemble")
+    p.add_argument("--ensemble-index", type=int, default=None,
+                   help="Must match whatever run_smoke_test.sh passed run_temporal_binning.py's "
+                        "own --ensemble-index for the precip step -- otherwise check 2's raw-vs-"
+                        "binned comparison compares a still-4-member raw array against an "
+                        "already-collapsed-to-1-member binned one and fails on a shape mismatch "
+                        "that has nothing to do with real precip mass conservation.")
+    p.add_argument("--time-chunk", type=int, default=50,
+                   help="Timesteps processed per chunk in check 3's min/max scan (same default "
+                        "as run_downscaling.py's --time-chunk) -- keeps peak memory bounded to "
+                        "one chunk instead of materializing the full multi-year store at once.")
     return p.parse_args()
+
+
+def _streamed_min_max(da, time_chunk=50):
+    """min/max of a (possibly multi-year) zarr-backed DataArray, computed
+    `time_chunk` timesteps at a time instead of via a single da.min()/
+    da.max() call. Without dask (not installed in the japan-model env),
+    xarray has no chunked graph to fall back on -- a bare .min() pulls the
+    *entire* array into one numpy buffer before reducing it, which is fine
+    for the ~28-day smoke-test window this check was written for but OOMs
+    at 10-year scale (job 6016579: killed at 64G during this exact check).
+    Streaming keeps peak memory to one chunk's worth, same pattern as
+    lapse_rate_lib.lapse_rate_correct_zarr's time_chunk loop."""
+    n_time = da.sizes["time"]
+    run_min, run_max = None, None
+    for start in range(0, n_time, time_chunk):
+        block = da.isel(time=slice(start, start + time_chunk)).values
+        block_min, block_max = block.min(), block.max()
+        run_min = block_min if run_min is None else min(run_min, block_min)
+        run_max = block_max if run_max is None else max(run_max, block_max)
+    return float(run_min), float(run_max)
 
 
 def main():
@@ -107,6 +138,8 @@ def main():
     @check(f"Precip mass conservation ({args.time_start}..{args.time_end}, {args.ic})")
     def _():
         raw = xr.open_zarr(args.hiro_zarr)["PRATEsfc"].sel(time=slice(args.time_start, args.time_end))
+        if args.ensemble_index is not None:
+            raw = raw.isel({args.ensemble_dim: args.ensemble_index})
         binned = xr.open_zarr(args.prcp_binned)["PRATEsfc"]
         assert binned.sizes["time"] > 0, "no days in binned output to check"
 
@@ -129,8 +162,8 @@ def main():
     def _():
         temp_binned = xr.open_zarr(args.temp_binned)["TMP2m"]
         temp_catch_da = xr.open_zarr(args.temp_catchments)["TMP2m"]
-        grid_min, grid_max = float(temp_binned.min()), float(temp_binned.max())
-        catch_min, catch_max = float(temp_catch_da.min()), float(temp_catch_da.max())
+        grid_min, grid_max = _streamed_min_max(temp_binned, args.time_chunk)
+        catch_min, catch_max = _streamed_min_max(temp_catch_da, args.time_chunk)
         assert grid_min - 1e-3 <= catch_min, f"catchment min {catch_min} < grid min {grid_min}"
         assert catch_max <= grid_max + 1e-3, f"catchment max {catch_max} > grid max {grid_max}"
         print(f"  temp: grid [{grid_min:.2f}, {grid_max:.2f}] K, "
@@ -138,8 +171,8 @@ def main():
 
         prcp_binned = xr.open_zarr(args.prcp_binned)["PRATEsfc"]
         prcp_catch_da = xr.open_zarr(args.prcp_catchments)["PRATEsfc"]
-        g_min, g_max = float(prcp_binned.min()), float(prcp_binned.max())
-        c_min, c_max = float(prcp_catch_da.min()), float(prcp_catch_da.max())
+        g_min, g_max = _streamed_min_max(prcp_binned, args.time_chunk)
+        c_min, c_max = _streamed_min_max(prcp_catch_da, args.time_chunk)
         assert g_min - 1e-6 <= c_min, f"catchment min {c_min} < grid min {g_min}"
         assert c_max <= g_max + 1e-6, f"catchment max {c_max} > grid max {g_max}"
         print(f"  precip: grid [{g_min:.3g}, {g_max:.3g}], catchment [{c_min:.3g}, {c_max:.3g}]")

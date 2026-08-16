@@ -47,6 +47,11 @@ def parse_args():
                         "an 00:00 sample -- HiRO-ACE's raw stores start at 06:00, not 00:00, so "
                         "the first valid day boundary is the *second* calendar day.")
     p.add_argument("--time-end", default=None, help="ISO date, e.g. 2014-01-30 (default: full series)")
+    p.add_argument("--ensemble-dim", default="ensemble",
+                   help="Name of the ensemble dim, if --ensemble-index is given")
+    p.add_argument("--ensemble-index", type=int, default=None,
+                   help="Select a single ensemble member (e.g. one of HiRO's 4) before rebinning, "
+                        "collapsing --ensemble-dim entirely -- default: keep every member, unchanged")
     p.add_argument("--overwrite", action="store_true", help="Allow overwriting an existing out_zarr")
     return p.parse_args()
 
@@ -59,11 +64,14 @@ def main():
         raise SystemExit(f"{out_path} already exists -- pass --overwrite to replace it")
 
     time_slice = slice(args.time_start, args.time_end) if (args.time_start or args.time_end) else None
+    member_note = "" if args.ensemble_index is None else f", {args.ensemble_dim}={args.ensemble_index}"
     print(f"Rebinning {args.var} from {args.input_zarr} (method: {args.method}, "
-          f"{'full series' if time_slice is None else f'{args.time_start} to {args.time_end}'}) ...")
+          f"{'full series' if time_slice is None else f'{args.time_start} to {args.time_end}'}"
+          f"{member_note}) ...")
     write_rebinned_to_zarr(
         args.input_zarr, args.var, args.method, out_path,
         time_dim=args.time_dim, day_chunk=args.day_chunk, time_slice=time_slice,
+        ensemble_dim=args.ensemble_dim, ensemble_index=args.ensemble_index,
     )
     print(f"Done -> {out_path}")
 

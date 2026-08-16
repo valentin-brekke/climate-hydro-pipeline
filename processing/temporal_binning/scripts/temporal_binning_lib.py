@@ -246,7 +246,8 @@ REBIN_METHODS = {
 # Zarr streaming
 # --------------------------------------------------------------------------
 
-def rebin_zarr(zarr_path, var, method, time_dim="time", day_chunk=30, time_slice=None):
+def rebin_zarr(zarr_path, var, method, time_dim="time", day_chunk=30, time_slice=None,
+                ensemble_dim="ensemble", ensemble_index=None):
     """Stream `var` out of a zarr store, rebinning `day_chunk` days at a
     time onto the 4h-bin daily structure. `method`: "linear" (temperature)
     or "conservative" (precipitation). Yields one (time, bin, ...) DataArray
@@ -259,10 +260,26 @@ def rebin_zarr(zarr_path, var, method, time_dim="time", day_chunk=30, time_slice
     HiRO-ACE's raw stores start at 06:00 (the first post-initial-condition
     step), not 00:00, so an unsliced full-store run would already fail this
     same assertion -- this isn't a new constraint, just newly reachable.
+
+    `ensemble_index`, if given, selects a single member out of `var`'s
+    `ensemble_dim` (e.g. HiRO's 4-member precipitation ensemble) *before*
+    rebinning -- collapses the dim entirely rather than carrying a
+    size-1 one through, so downstream (`catchment_weighting`, `run_predict.py`)
+    sees the same shape as a variable that never had an ensemble dim to begin
+    with. Raises if `var` doesn't actually have `ensemble_dim` -- catches a
+    typo'd index against the wrong variable (e.g. temperature, which has no
+    ensemble dim at all) rather than silently no-op'ing.
     """
     rebin_fn = REBIN_METHODS[method]
     ds = xr.open_zarr(zarr_path)
     da = ds[var]
+    if ensemble_index is not None:
+        if ensemble_dim not in da.dims:
+            raise ValueError(
+                f"--ensemble-index={ensemble_index} given but {var!r} has no "
+                f"{ensemble_dim!r} dim (dims: {da.dims})"
+            )
+        da = da.isel({ensemble_dim: ensemble_index})
     if time_slice is not None:
         da = da.sel(**{time_dim: time_slice})
     times = da[time_dim].values
@@ -278,12 +295,14 @@ def rebin_zarr(zarr_path, var, method, time_dim="time", day_chunk=30, time_slice
 
 
 def write_rebinned_to_zarr(zarr_path, var, method, out_path, time_dim="time",
-                           day_chunk=30, time_slice=None, verbose=True):
+                           day_chunk=30, time_slice=None, verbose=True,
+                           ensemble_dim="ensemble", ensemble_index=None):
     """Consume `rebin_zarr` and stream the result to a new zarr store, one
     day-chunk at a time (append-write)."""
     out_path = Path(out_path)
     n_written = 0
-    for i, chunk in enumerate(rebin_zarr(zarr_path, var, method, time_dim, day_chunk, time_slice)):
+    for i, chunk in enumerate(rebin_zarr(zarr_path, var, method, time_dim, day_chunk, time_slice,
+                                          ensemble_dim=ensemble_dim, ensemble_index=ensemble_index)):
         ds_out = chunk.to_dataset()
         ds_out.to_zarr(out_path, mode="w" if i == 0 else "a",
                         append_dim=None if i == 0 else "time")
