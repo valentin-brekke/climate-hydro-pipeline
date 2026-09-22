@@ -112,6 +112,15 @@ Result of the full run (job 6006195):
 
 This is *not* a methodology mismatch — directly confirmed by reading `Analysis.ipynb` itself (cells 6-7): the notebook loads a **pretrained** checkpoint and runs one `extract_train` pass over `tr_nodes`, exactly what `run_evaluate.py` does. (`exp_helpers.py`'s `define_splits`/`run_experiments` 10-fold retraining loop is a separate tool the notebook never calls for scoring — an earlier guess that the gap was explained by that was wrong.) The 877-vs-962 gap (§4) doesn't explain it either — confirmed inert. So the NSE drop + non-finite `y_obs` is still a real, open discrepancy. Leading suspect: §5's normalization-stats gap. See §6.
 
+### 4.3 NSE gap resolved (2026-09-18, Myriad)
+
+- **Isambard job 6032796:** `Analysis.ipynb`'s own code, re-run verbatim, reproduces **0.9135** (with non-finite `y_obs` too). So the data, the checkpoint and the NaNs were never the problem; the gap was in the port.
+- **Myriad job 366847** (`hydro/scripts/myriad/compare_notebook_vs_port.py`): the means match exactly, but every std differs. For temperature the notebook's std is ~1.0 and the port's ~9.6; `y_std` is 85.76 vs 125.77.
+- **Cause:** xtensor's `DataTensor._reduce` applies a multi-dim reduction **one axis at a time** (last axis first). So the notebook's `x.std(dim=("time","spatial"))` is really `std over spatial of (std over time)`, not a pooled std. The checkpoint was trained on inputs normalized that way.
+- **Fix:** `data.compute_dynamic_stats`/`compute_discharge_std` now replicate the axis-by-axis std.
+- **Myriad job 367308:** the port's inputs match the notebook's to max |diff| 7.6e-5, and **`run_evaluate.py` NSE median = 0.9135**. The corrected frozen stats are at `~/Scratch/climate-hydro/results/dynamic_stats_frozen.nc` on Myriad. **Any `dynamic_stats_frozen.nc` from Isambard used the pooled std and is wrong; don't reuse it.**
+- **Worth telling Tristan:** this xtensor behaviour is surprising (xarray pools over both dims). The model is internally consistent with it, so don't "fix" it in xtensor without retraining.
+
 ## 5. The normalization-stats gap (found while designing this, worth fixing regardless of this refactor)
 
 `data_loading_local()` computes `x_mean`/`x_std`/`y_std` **live**, from whatever's currently loaded — there's no persisted normalization artifact from training. That's invisible as long as you always load the *same* historical dataset the notebook already uses. It stops being invisible the moment genuinely different-distributed data is fed in (HiRO-ACE's climatology won't match 2015–2021 MSM/GARADAR's exactly) — the model would then see inputs normalized against a different reference than it was trained on, **with nothing erroring to flag it**. A silent distribution-shift bug, not a crash.
@@ -120,10 +129,24 @@ This is *not* a methodology mismatch — directly confirmed by reading `Analysis
 
 **Action needed, not yet done:** actually run `data.compute_dynamic_stats`/`compute_discharge_std` against the *original* historical training data on Isambard (this repo's local copy may not exactly match what the checkpoint was trained on — see §4's 877-vs-962 note) and save the frozen artifact both scripts should then use by default. Worth raising with Tristan too, independent of this refactor, since it's a latent issue in the shared code.
 
+### 5.1 Which stats to normalize with (decided 2026-09-22)
+
+Two different kinds of number, so two different rules:
+
+- **`y_std` is always the frozen training-time value (85.761).** It isn't a statistic of the data being predicted on -- the model was fitted to predict `y / y_std_train`, so `y_std` is the unit its output is in, i.e. part of the trained model. New forcing contains no discharge to compute one from anyway. Confirmed empirically rather than assumed: NSE compares `y/y_std` against an output that doesn't depend on `y_std`, so a wrong one shows up directly (125.8 -> 0.389 vs 85.761 -> 0.9135, SS4.3).
+- **`x_mean`/`x_std` may come from the forcing itself** (`run_predict.py --x-stats forcing`), as a deliberate crude mean/variance bias correction: a systematic HiRO-ACE-vs-MSM/GARADAR offset is absorbed at normalization instead of propagating into the discharge. This is an *intervention*, not the ML-consistent choice, so it's an explicit flag and `--save-stats-path` records what a run actually used. It stays coherent with a frozen `y_std`: the forcing is mapped into the model's expected input space, the output back out via the model's own output scale. A live `y_std` would not be coherent -- it would rescale the output by a number the weights know nothing about.
+
+Cost of `--x-stats forcing`: a genuinely wetter/warmer trajectory is normalized away along with the bias. Two ways to get it wrong, both guarded in code:
+
+- **Never per ensemble member.** Stats are pooled over `("ensemble", "spatial")` so one set covers every member; per-member stats would remove exactly the between-member differences the ensemble exists to measure.
+- **Never on a short window.** Stats from a 28-day slice aren't comparable to full-trajectory ones -- with the SS4.3 convention the std is "how much catchments differ in their temporal variability", which a sub-seasonal window barely samples. `run_predict.py` warns below 365 timesteps.
+
+**Planned successor:** proper upstream bias correction (quantile-map HiRO-ACE precip/temp against MSM/GARADAR climatology in physical units, before catchment weighting), then run with `--x-stats frozen`. That corrects the whole distribution rather than just mean/variance and keeps the ML path untouched.
+
 ## 6. Next steps
 
 1. ~~Requires Isambard...~~ **Done (§4.2, 2026-08-13).** `run_evaluate.py` did not reproduce NSE ≈ 0.9135 (got 0.3894, non-finite `y_obs`); the 877-vs-962 gauge-count question is resolved and confirmed to not be the cause.
-2. **Current priority:** compute and freeze the real training-time normalization stats (§5) and re-run `run_evaluate.py --stats-path ...` against them, instead of the current live-computed-from-today's-data stats. Leading suspect for the NSE gap/non-finite `y_obs`, since it's an already-known latent issue in the *original* shared code, not a guess.
+2. ~~**Current priority:** compute and freeze~~ **Done (§4.3, 2026-09-18).** Compute and freeze the real training-time normalization stats (§5) and re-run `run_evaluate.py --stats-path ...` against them, instead of the current live-computed-from-today's-data stats. Leading suspect for the NSE gap/non-finite `y_obs`, since it's an already-known latent issue in the *original* shared code, not a guess.
 3. If that doesn't resolve it, dig into `y_obs`'s non-finite values directly — which catchments, and why (candidates not yet ruled out: a real gap between this repo's `hydro/data/` and whatever `default.pt` was actually trained on).
 4. ~~Once `processing/catchment_weighting` + `processing/temporal_binning`'s final-assembly gap is filled...~~ **Also done, at smoke scale (§4.2).** `run_predict.py` ran end-to-end against real HiRO-ACE-derived forcing (`hiroace_dynamic_ic0000_smoke.zarr`) — first real HiRO-ACE → hydro-model run, passed cleanly.
 

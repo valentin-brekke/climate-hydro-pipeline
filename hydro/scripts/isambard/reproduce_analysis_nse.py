@@ -35,9 +35,13 @@ Needs a GPU: cell 6/7 build and run the real dhp.RRModel/RRModule forward
 pass (torch/diffhydro/triton), same as run_evaluate.py's own leg in
 run_smoke_test.sh.
 """
+import os
 import sys
 from pathlib import Path
-sys.path.insert(0, '/projects/u6t/vbrekke/climate-hydro-pipeline/hydro')
+# Paths overridable via env vars so the same script runs on other sites
+# (hydro/scripts/myriad/run_reproduce_analysis_nse.sh); defaults are Isambard's.
+REPO_HYDRO = os.environ.get('HYDRO_REPO_DIR', '/projects/u6t/vbrekke/climate-hydro-pipeline/hydro')
+sys.path.insert(0, REPO_HYDRO)
 
 import numpy as np, pandas as pd, geopandas as gpd, xarray as xr, torch, networkx as nx
 import hvplot.pandas
@@ -61,10 +65,10 @@ from exp_helpers import (
 # --- cell 1 (verbatim, except DATA_DIR/RESULTS_DIR made absolute) ---
 EXP_NAME    = "default"
 DEVICE      = "cuda:0"
-DATA_DIR    = Path('/projects/u6t/vbrekke/climate-hydro-pipeline/hydro/data')
+DATA_DIR    = Path(os.environ.get('HYDRO_DATA_DIR', '/projects/u6t/vbrekke/climate-hydro-pipeline/hydro/data'))
 # The checkpoint lives in the original (pre-refactor) repo, not this one --
 # see hydro/pipeline/README.md's "What this is", same as run_smoke_test.sh.
-RESULTS_DIR = Path('/projects/u6t/vbrekke/japan-hydro-pipeline/results')
+RESULTS_DIR = Path(os.environ.get('HYDRO_RESULTS_DIR', '/projects/u6t/vbrekke/japan-hydro-pipeline/results'))
 
 
 # --- cell 3 (verbatim) ---
@@ -221,3 +225,19 @@ print(f"y_obs finite: {np.isfinite(y_obs.to_numpy()).all()}  "
 if not np.isfinite(y_obs.to_numpy()).all():
     n_bad_nodes = (~np.isfinite(y_obs.to_numpy())).any(axis=0).sum()
     print(f"  non-finite y_obs touches {n_bad_nodes}/{y_obs.shape[1]} nodes")
+
+# Optional (off by default, so Isambard behaviour is unchanged): persist this
+# run's per-node outputs so they can be compared element-wise against
+# run_evaluate.py's own saved output -- see
+# hydro/scripts/myriad/compare_nse_outputs.py. `nse_tr.median()` agreeing to
+# 4dp is a weak check; the arrays agreeing node-by-node is the real one.
+_save = os.environ.get("NSE_SAVE_PATH")
+if _save:
+    print(f"Saving notebook-path outputs -> {_save}")
+    import xarray as _xr
+    _xr.Dataset({
+        "y_obs":  _xr.DataArray(y_obs.T.to_numpy(), dims=("spatial", "time"),
+                                coords={"spatial": y_obs.columns.to_numpy(), "time": y_obs.index.to_numpy()}),
+        "y_pred": _xr.DataArray(y_pred.T.to_numpy(), dims=("spatial", "time"),
+                                coords={"spatial": y_pred.columns.to_numpy(), "time": y_pred.index.to_numpy()}),
+    }).to_netcdf(_save)

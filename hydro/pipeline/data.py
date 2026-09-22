@@ -452,22 +452,48 @@ def define_splits(g, tr_nodes, all_nodes, n_folds=10):
 # README.md's "normalization isn't frozen in the shared code" note)
 # ---------------------------------------------------------------------------
 
-def compute_dynamic_stats(x_ds):
+def compute_dynamic_stats(x_ds, sample_dims=("spatial",)):
     """Per-variable mean/std over (time, spatial), matching what
-    `data_loading_local` computes live from `x` on every run. Call this
-    *once* against the original historical forcing and persist the result
-    (`save_stats`) -- both `evaluate` and `predict` should load the frozen
-    stats rather than recomputing them from whatever's currently loaded.
+    `data_loading_local` computes live from `x` on every run.
+
+    `sample_dims` are the dims treated as interchangeable samples in the
+    second reduction (the first is always over `time`). Pass
+    `("ensemble", "spatial")` for ensemble forcing so that **one** set of
+    stats covers every member: normalizing each member by its own stats
+    would remove exactly the between-member differences the ensemble exists
+    to measure. Several sample dims are pooled (stacked into one) rather
+    than reduced one after another -- "std of std of std" isn't a
+    meaningful quantity, and members are just extra samples of the same
+    thing.
+
+    NOT a pooled std: xtensor's `DataTensor._reduce` applies a multi-dim
+    reduction one axis at a time (last axis first), so the notebook's
+    `x.std(dim=("time", "spatial"))` on its (batch, spatial, time, variable)
+    tensor is really `std over spatial of (std over time)` -- population std,
+    NaN-skipping. The checkpoint was trained on inputs normalized that way,
+    so it's replicated here. Using the pooled std instead (~9.6 vs ~1.0 for
+    temperature) is what dropped run_evaluate.py's NSE median from 0.9135 to
+    0.3894 (confirmed on Myriad, job 366847,
+    hydro/scripts/myriad/compare_notebook_vs_port.py). The mean is
+    unaffected: mean-of-means equals the pooled mean at equal counts.
     """
     stacked = x_ds.to_array(dim="variable")
-    mean = stacked.mean(dim=("time", "spatial"))
-    std = stacked.std(dim=("time", "spatial"))
-    return mean, std
+    mean_t = stacked.mean(dim="time")
+    std_t = stacked.std(dim="time")
+    dims = [d for d in sample_dims if d in stacked.dims]
+    if not dims:
+        raise ValueError(f"none of sample_dims={sample_dims} are dims of the forcing ({stacked.dims})")
+    if len(dims) == 1:
+        return mean_t.mean(dim=dims[0]), std_t.std(dim=dims[0])
+    return (mean_t.stack(_sample=dims).mean(dim="_sample"),
+            std_t.stack(_sample=dims).std(dim="_sample"))
 
 
 def compute_discharge_std(y_da):
-    """`y_std` -- same "compute once, freeze" caveat as `compute_dynamic_stats`."""
-    return y_da.std(dim=("time", "spatial"))
+    """`y_std` -- same "compute once, freeze" caveat as `compute_dynamic_stats`,
+    and the same xtensor sequential-reduction semantics (std over time per
+    gauge, then std of those across gauges), not a pooled std."""
+    return y_da.std(dim="time").std(dim="spatial")
 
 
 def normalize_forcing(x_ds, x_mean, x_std, dynamic_var):

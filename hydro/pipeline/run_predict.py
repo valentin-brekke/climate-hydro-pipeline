@@ -16,10 +16,12 @@ Differences from `run_evaluate.py`, both deliberate (see README.md's
   - No dam/`bad_kp` exclusion -- that filtering exists in `evaluate` to
     keep *training* data clean of dam-perturbed flow, not because those
     catchments' predictions are somehow invalid to produce.
-  - `--stats-path` is *required*, not optional: there's no historical `y`
-    here to compute live fallback stats from even if we wanted to, and
-    normalizing new/synthetic forcing by anything other than the frozen
-    training-time stats would feed the model out-of-contract inputs.
+  - `--stats-path` is *required*, not optional: `y_std` (the unit the
+    model's own output was fitted in) can only come from the training data,
+    since new forcing contains no discharge to compute one from. The
+    forcing's own `x_mean`/`x_std` can optionally replace the frozen ones
+    via `--x-stats forcing` -- a deliberate bias-correction choice, see
+    `README.md` SS5.1.
   - Loops over an `ensemble` dim if the forcing dataset has one (as
     HiRO-ACE's precipitation does) -- one independent forward pass per
     member, stacked into one `ensemble`-dim output.
@@ -79,7 +81,17 @@ def parse_args():
     p.add_argument("--device", default="cpu", help="Pass cuda:0 explicitly on a GPU node")
     p.add_argument("--stats-path", required=True,
                    help="Frozen normalization stats (data.save_stats output, computed once from "
-                        "the original historical training data -- see README.md).")
+                        "the original historical training data -- see README.md). y_std is ALWAYS "
+                        "taken from here regardless of --x-stats: it's the scale the model's own "
+                        "output was fitted in, not a property of the forcing.")
+    p.add_argument("--x-stats", choices=("frozen", "forcing"), default="frozen",
+                   help="Where the forcing's x_mean/x_std come from. 'frozen': --stats-path's "
+                        "training-time stats (ML-consistent; any bias in the forcing propagates "
+                        "into the discharge). 'forcing': recomputed from --forcing-zarr itself, a "
+                        "deliberate crude mean/variance bias correction -- see README.md SS5.1.")
+    p.add_argument("--save-stats-path", default=None,
+                   help="If given, persist the x_mean/x_std/y_std this run actually used, so the "
+                        "run's normalization convention is recoverable from its output.")
     p.add_argument("--stats-source-keys", nargs="+", default=data.DEFAULT_DYNAMIC_KEYS,
                    help="data.DYNAMIC_VAR_DICT keys --stats-path's x_mean/x_std were actually "
                         "computed from (e.g. the real msm_a_temp_4h_bin/garadar_prcp_4h_bin the "
@@ -157,9 +169,41 @@ def main():
         target_nodes = list(g.nodes)
         print(f"Predicting for all {len(target_nodes)} catchments in the graph")
 
+    print(f"Loading forcing from {args.forcing_zarr} (keys: {args.dynamic_keys}) ...")
+    x_ds_full = data.load_forcing_dataset(args.forcing_zarr, dynamic_var)
+
+    # y_std always comes from the frozen artifact, whatever --x-stats says: the
+    # model was fitted to predict y/y_std_train, so y_std is the unit its output
+    # is in -- part of the trained model, not a statistic of the forcing (which
+    # has no discharge in it to compute one from anyway). Confirmed empirically:
+    # NSE compares y/y_std against an output that doesn't depend on y_std, so a
+    # wrong y_std shows up directly (125.8 -> 0.389 vs 85.761 -> 0.9135).
     print(f"Loading frozen normalization stats from {args.stats_path} ...")
     x_mean, x_std, y_std = data.load_stats(args.stats_path)
 
+    if args.x_stats == "forcing":
+        # Deliberate intervention, chosen 2026-09-22: normalize the forcing by its
+        # own mean/std so a systematic HiRO-ACE-vs-MSM/GARADAR offset is absorbed
+        # here rather than propagating into the predicted discharge. Pairing it
+        # with the frozen y_std stays coherent -- inputs are mapped into the
+        # model's expected input space, outputs back out via the model's own
+        # output scale. (Live y_std would NOT be coherent: it would rescale the
+        # output by a number the weights know nothing about.)
+        sample_dims = ("ensemble", "spatial") if "ensemble" in x_ds_full.dims else ("spatial",)
+        n_time = x_ds_full.sizes["time"]
+        print(f"--x-stats forcing: recomputing x_mean/x_std from the forcing itself "
+              f"(pooled over {sample_dims}, {n_time} timesteps) ...")
+        if n_time < 365:
+            print(f"  WARNING: only {n_time} timesteps -- shorter than a seasonal cycle. These "
+                  f"stats are not comparable to full-trajectory ones (the std here is the spread "
+                  f"of per-catchment temporal variability, which a short window barely samples). "
+                  f"Compute them over the full trajectory and apply to slices instead.")
+        x_mean, x_std = data.compute_dynamic_stats(x_ds_full, sample_dims=sample_dims)
+    else:
+        print("--x-stats frozen: normalizing with the training-time stats.")
+
+    # Relabeling below applies to the frozen stats only -- stats recomputed from
+    # the forcing already carry --dynamic-keys' own variable names.
     # The frozen stats were computed against real historical forcing variable names
     # (--stats-source-keys, e.g. msm_a_temp_4h_bin/garadar_prcp_4h_bin) -- named
     # differently from --dynamic-keys' HiRO-ACE variables on purpose (README.md's
@@ -173,17 +217,19 @@ def main():
     # bin_0..5 structure, temp-then-precip order, per DYNAMIC_VAR_DICT) -- so
     # relabel the stats' own "variable" coordinate onto --dynamic-keys' names,
     # position for position, instead of relying on name-matching.
-    stats_source_var = data.expand_dynamic_keys(args.stats_source_keys)
-    assert len(stats_source_var) == len(dynamic_var), (
-        f"frozen stats has {len(stats_source_var)} variables ({args.stats_source_keys}) but "
-        f"--dynamic-keys expands to {len(dynamic_var)} ({args.dynamic_keys}) -- can't "
-        f"positionally substitute one for the other"
-    )
-    x_mean = x_mean.sel(variable=stats_source_var).assign_coords(variable=dynamic_var)
-    x_std = x_std.sel(variable=stats_source_var).assign_coords(variable=dynamic_var)
+    if args.x_stats == "frozen":
+        stats_source_var = data.expand_dynamic_keys(args.stats_source_keys)
+        assert len(stats_source_var) == len(dynamic_var), (
+            f"frozen stats has {len(stats_source_var)} variables ({args.stats_source_keys}) but "
+            f"--dynamic-keys expands to {len(dynamic_var)} ({args.dynamic_keys}) -- can't "
+            f"positionally substitute one for the other"
+        )
+        x_mean = x_mean.sel(variable=stats_source_var).assign_coords(variable=dynamic_var)
+        x_std = x_std.sel(variable=stats_source_var).assign_coords(variable=dynamic_var)
 
-    print(f"Loading forcing from {args.forcing_zarr} (keys: {args.dynamic_keys}) ...")
-    x_ds_full = data.load_forcing_dataset(args.forcing_zarr, dynamic_var)
+    if args.save_stats_path:
+        print(f"Saving the normalization stats this run used -> {args.save_stats_path}")
+        data.save_stats(args.save_stats_path, x_mean, x_std, y_std)
 
     inp_mlp_size = len(routing_statics.columns)
     inp_lstm_size = len(dynamic_var) + len(runoff_static_var)
