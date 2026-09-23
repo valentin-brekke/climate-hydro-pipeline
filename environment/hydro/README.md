@@ -1,5 +1,9 @@
 # Japan Hydro Pipeline — Isambard-AI
 
+This file covers the **Isambard** site (`isambard/`). For UCL Myriad (SGE),
+see `myriad/README.md` — same conda-env pattern, different scheduler and
+CUDA/torch pinning.
+
 Conda env, not container-based. Python 3.11.
 
 ## Setup

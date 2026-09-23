@@ -10,7 +10,8 @@ hydro/
 ├── modified_code/       # same 3 files, kept separately as in the source repo
 ├── exploration/         # data_exploration.ipynb
 ├── pipeline/            # clean, testable rebase of Analysis.ipynb -- see pipeline/README.md
-└── scripts/isambard/    # vscode_tunnel.sh (sbatch + code tunnel)
+├── scripts/isambard/    # vscode_tunnel.sh (sbatch + code tunnel), smoke tests, NSE reproduction
+└── scripts/myriad/      # SGE equivalents + the NSE notebook-vs-port diagnostics
 ```
 
 `pipeline/` splits `Analysis.ipynb`'s notebook-global logic into a pure

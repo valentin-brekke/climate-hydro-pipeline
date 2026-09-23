@@ -8,7 +8,8 @@ components unless their dependencies actually match.
 ```
 environment/
 ├── hiroace/isambard/   # container + venv
-└── hydro/isambard/     # conda env
+├── hydro/isambard/     # conda env
+└── hydro/myriad/       # conda env + build script (SGE site)
 ```
 
 Inside each component, `<site>/` holds the concrete setup for one HPC

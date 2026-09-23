@@ -1,7 +1,7 @@
 """Thin `xtensor`/`diffhydro` wrapping layer -- the *only* place in this
 package that imports `torch`, `xtensor`, or `diffhydro`.
 
-**Nothing in this file has been run or tested.** None of those packages are
+**Written blind, but run since 2026-08-13** (Isambard, then Myriad -- see `README.md` §4.2-4.4; the API contracts below are now confirmed against real runs, not just source reading). At the time of writing, none of those packages were
 installed anywhere this was written (they're editable installs from private
 paths on Isambard only -- see `../environment.yaml`), so this is correct to
 the best of my reading of the actual `xtensor`/`DiffHydro`/`DiffRoute`

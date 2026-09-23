@@ -2,7 +2,9 @@
 
 **Status:** pure data layer fully implemented and verified against real data. `diffhydro`/`xtensor`-touching layer implemented against the actual library source, and confirmed — by actually cloning and `pip install -e`-ing all three repos locally on 2026-08-11 — that it **cannot run on macOS at all**, for a specific, confirmed reason (§4.1), not just "untested." Needs Isambard (or another Linux+CUDA/ROCm machine). See §4 for the full breakdown.
 
-**Update (2026-08-13):** now actually run on Isambard. `run_predict.py` passed end-to-end at full scale (all 8,893 catchments, 4 HiRO-ACE ensemble members, but very limited time range - few days ?). `run_evaluate.py` did not reproduce the cached NSE — see §4.2 for what that run found and fixed, and what's still open.
+**Update (2026-08-13):** now actually run on Isambard. `run_predict.py` passed end-to-end at full scale (all 8,893 catchments, 4 HiRO-ACE ensemble members, but very limited time range - few days ?). `run_evaluate.py` did not reproduce the cached NSE — see §4.2.
+
+**Update (2026-09-18/22, Myriad):** the NSE gap is **resolved** — `run_evaluate.py` scores 0.9135, matching `Analysis.ipynb` (§4.3). The two remaining "inferred, not confirmed" items below (`RivTree`'s `param_df`, the `o * y_std` de-normalization) are now **confirmed from the library source** (§4.4). Everything here runs on Myriad too (`environment/hydro/myriad/`).
 
 ## 1. What this is
 
@@ -13,8 +15,8 @@ This directory is that same logic, rebased into:
 ```
 hydro/pipeline/
 ├── data.py           -- pure (no torch/xtensor/diffhydro); fully tested against real data
-├── tensors.py         -- thin xtensor/diffhydro wrapping; NOT tested (see §4)
-├── model.py            -- model construction + checkpoint loading; NOT tested (see §4)
+├── tensors.py         -- thin xtensor/diffhydro wrapping; run on Isambard/Myriad since 2026-08-13 (§4.2-4.4)
+├── model.py            -- model construction + checkpoint loading; same
 ├── run_evaluate.py     -- CLI: historical forcing + real discharge -> NSE (Analysis.ipynb's flow)
 └── run_predict.py      -- CLI: any forcing, no ground truth needed -> predicted discharge
 ```
@@ -92,9 +94,7 @@ So this is core numerical machinery, not a peripheral optimization with a flag t
 
 **One genuine design risk, not just "unconfirmed":** every `RRModule.extract_*` method requires a real `y` — confirmed directly from `_extract_full_ts`'s source, which unconditionally does `y = y.to(device)` inside its batch loop. There is no pure "predict, no target" entry point anywhere in the library. `run_predict.py` works around this with a same-shaped, zero-filled dummy `y`, discarding it from the returned tuple and keeping only the model's own output `o`. This should be mechanically fine — `BaseDataset`'s windowing treats `x`/`y` symmetrically only for time-slicing, and the actual forward pass (`run_model`) never touches `y` — but it's inferred from reading the windowing code, not observed. **Flag this specifically if `run_predict.py`'s first real run does anything unexpected.**
 
-Smaller things worth a first-run sanity check, called out inline in `tensors.py`'s docstrings too:
-- Whether `RivTree`'s `param_df` needs pre-filtering to the (sub)graph's own nodes, or handles that internally — passed in full, matching `Analysis.ipynb`'s own (working) call pattern exactly, rather than guessing at pre-filtering.
-- `run_predict.py`'s de-normalization of the model's output (`o * y_std`) — reasonable given the architecture, but not independently confirmed against a real run.
+~~Smaller things worth a first-run sanity check~~ — **both confirmed from the library source, see §4.4:** `RivTree` selects its own nodes from `param_df` (no pre-filtering needed), and `o * y_std` is the correct de-normalization.
 
 ### 4.2 First real Isambard run (2026-08-13) — what it found
 
@@ -118,16 +118,25 @@ This is *not* a methodology mismatch — directly confirmed by reading `Analysis
 - **Myriad job 366847** (`hydro/scripts/myriad/compare_notebook_vs_port.py`): the means match exactly, but every std differs. For temperature the notebook's std is ~1.0 and the port's ~9.6; `y_std` is 85.76 vs 125.77.
 - **Cause:** xtensor's `DataTensor._reduce` applies a multi-dim reduction **one axis at a time** (last axis first). So the notebook's `x.std(dim=("time","spatial"))` is really `std over spatial of (std over time)`, not a pooled std. The checkpoint was trained on inputs normalized that way.
 - **Fix:** `data.compute_dynamic_stats`/`compute_discharge_std` now replicate the axis-by-axis std.
-- **Myriad job 367308:** the port's inputs match the notebook's to max |diff| 7.6e-5, and **`run_evaluate.py` NSE median = 0.9135**. The corrected frozen stats are at `~/Scratch/climate-hydro/results/dynamic_stats_frozen.nc` on Myriad. **Any `dynamic_stats_frozen.nc` from Isambard used the pooled std and is wrong; don't reuse it.**
+- **Myriad job 367308:** the port's inputs match the notebook's to max |diff| 7.6e-5, and **`run_evaluate.py` NSE median = 0.9135**. Verified element-wise in job 9998351 — see §6.1. The corrected frozen stats are at `~/Scratch/climate-hydro/results/dynamic_stats_frozen.nc` on Myriad. **Any `dynamic_stats_frozen.nc` from Isambard used the pooled std and is wrong; don't reuse it.**
 - **Worth telling Tristan:** this xtensor behaviour is surprising (xarray pools over both dims). The model is internally consistent with it, so don't "fix" it in xtensor without retraining.
+
+### 4.4 The two "inferred, not confirmed" assumptions — both now confirmed (2026-09-22)
+
+Read directly from the installed library source on Myriad, not inferred:
+
+- **`RivTree`'s `param_df` does not need pre-filtering.** `init_params_from_df` (DiffRoute, `structs/riv_graphs.py`) does `param_df.loc[nodes_idx.index]` — it selects its own graph's nodes from whatever table it's handed. Passing the full 8,893-row `routing_statics` to a 318-node subgraph is correct, and matches `Analysis.ipynb`.
+- **`o * y_std` is the right de-normalization.** `RRModel.forward` runs `mm_to_m3s(runoff_mm, cat_area, temp_res_h)` internally, so the output *looks* like physical m³/s already — but training compared that output against the **normalized** `y / y_std` (`BaseModule.loss_fn(o, y, lbl_var)`), so the learned scaling absorbs `y_std` and the output is really in `y/y_std` units. Confirmed empirically too: §4.3's 0.9135 would be impossible if `o` and the normalized `y` differed by a factor of ~86.
+
+Also settled while reading: `season_msm_1..12` is a **static** per-catchment feature (12 standardized numbers, one per calendar month) that `Runoff.forward` concatenates onto the dynamic inputs along the `variable` axis, constant across every timestep. Nothing indexes it by the current step's month — so HiRO-ACE's dates never need to map onto real calendar months (see `processing/README.md`'s calendar section).
 
 ## 5. The normalization-stats gap (found while designing this, worth fixing regardless of this refactor)
 
 `data_loading_local()` computes `x_mean`/`x_std`/`y_std` **live**, from whatever's currently loaded — there's no persisted normalization artifact from training. That's invisible as long as you always load the *same* historical dataset the notebook already uses. It stops being invisible the moment genuinely different-distributed data is fed in (HiRO-ACE's climatology won't match 2015–2021 MSM/GARADAR's exactly) — the model would then see inputs normalized against a different reference than it was trained on, **with nothing erroring to flag it**. A silent distribution-shift bug, not a crash.
 
-`data.py` provides `compute_dynamic_stats`/`compute_discharge_std` (compute once) and `save_stats`/`load_stats` (persist as a small netCDF). `run_predict.py` requires `--stats-path` (no live-compute fallback, since there's no sensible one for synthetic forcing); `run_evaluate.py` accepts it optionally, with a loud warning if omitted, to stay close to `Analysis.ipynb`'s current behavior while making the better path available and obvious.
+`data.py` provides `compute_dynamic_stats`/`compute_discharge_std` (compute once) and `save_stats`/`load_stats` (persist as a small netCDF). `run_predict.py` requires `--stats-path` — but for `y_std` only; its `x_mean`/`x_std` can instead be recomputed from the forcing via `--x-stats forcing` (§5.1); `run_evaluate.py` accepts it optionally, with a loud warning if omitted, to stay close to `Analysis.ipynb`'s current behavior while making the better path available and obvious.
 
-**Action needed, not yet done:** actually run `data.compute_dynamic_stats`/`compute_discharge_std` against the *original* historical training data on Isambard (this repo's local copy may not exactly match what the checkpoint was trained on — see §4's 877-vs-962 note) and save the frozen artifact both scripts should then use by default. Worth raising with Tristan too, independent of this refactor, since it's a latent issue in the shared code.
+**Done (2026-09-18, Myriad job 367308):** `run_evaluate.py --save-stats-path` wrote the frozen artifact from the original historical data (`~/Scratch/climate-hydro/results/dynamic_stats_frozen.nc`, `y_std` = 85.761). Note any pre-fix copy (Isambard's included) used the pooled std and is wrong — regenerate rather than reuse. Original wording: actually run `data.compute_dynamic_stats`/`compute_discharge_std` against the *original* historical training data (this repo's local copy may not exactly match what the checkpoint was trained on — see §4's 877-vs-962 note) and save the frozen artifact both scripts should then use by default. Worth raising with Tristan too, independent of this refactor, since it's a latent issue in the shared code.
 
 ### 5.1 Which stats to normalize with (decided 2026-09-22)
 
@@ -145,10 +154,13 @@ Cost of `--x-stats forcing`: a genuinely wetter/warmer trajectory is normalized 
 
 ## 6. Next steps
 
-1. ~~Requires Isambard...~~ **Done (§4.2, 2026-08-13).** `run_evaluate.py` did not reproduce NSE ≈ 0.9135 (got 0.3894, non-finite `y_obs`); the 877-vs-962 gauge-count question is resolved and confirmed to not be the cause.
-2. ~~**Current priority:** compute and freeze~~ **Done (§4.3, 2026-09-18).** Compute and freeze the real training-time normalization stats (§5) and re-run `run_evaluate.py --stats-path ...` against them, instead of the current live-computed-from-today's-data stats. Leading suspect for the NSE gap/non-finite `y_obs`, since it's an already-known latent issue in the *original* shared code, not a guess.
-3. If that doesn't resolve it, dig into `y_obs`'s non-finite values directly — which catchments, and why (candidates not yet ruled out: a real gap between this repo's `hydro/data/` and whatever `default.pt` was actually trained on).
-4. ~~Once `processing/catchment_weighting` + `processing/temporal_binning`'s final-assembly gap is filled...~~ **Also done, at smoke scale (§4.2).** `run_predict.py` ran end-to-end against real HiRO-ACE-derived forcing (`hiroace_dynamic_ic0000_smoke.zarr`) — first real HiRO-ACE → hydro-model run, passed cleanly.
+**Done:** §4.2 (first Isambard run), §4.3 (NSE gap resolved — `run_evaluate.py` = 0.9135), §4.4 (library assumptions confirmed). The non-finite `y_obs` needs no further digging: `Analysis.ipynb`'s own code produces it too (missing gauge observations, 204/318 nodes), so it is normal, not a symptom.
+
+1. ~~**Element-wise verification of §4.3**~~ **Done (2026-09-23, job 9998351).** Both paths in one job: identical NaN masks; `y_obs` max|diff| 1.9e-6, `y_pred` max|diff| 1.9e-3 (6e-5 relative); per-node NSE max|diff| 2.1e-4 with 1/318 nodes above 1e-4; quartiles identical to 6 dp (0.865204/0.913490/0.941429 vs 0.865203/0.913489/0.941429). Float32/op-ordering noise, so §4.3 is confirmed across every catchment, not just at the median.
+2. **Regenerate the 10-year forcing, then copy it to Myriad.** The existing `hiroace_dynamic_ic0000_full10yr_m0.zarr` (1.3 GB, Mac only) predates the 2026-09-23 temperature-binning fix (`processing/README.md`), so its temperature is phase-shifted by one bin; rebuild from `TMP2m_corrected_*.zarr` onward rather than copying it as-is. Nothing HiRO-ACE-derived is on Myriad yet.
+3. **First meaningful `run_predict.py` run:** full 10 years, `--x-stats forcing` (§5.1), corrected frozen `y_std`. Every earlier prediction is superseded — the smoke ones used pre-unit-fix forcing *and* the wrong `y_std`.
+4. **Compare predicted discharge against observations** (`discharges.zarr`, already on Myriad, 962 gauged catchments). Distributions only — seasonal cycle, flow-duration curves, high-flow frequency — never a day-by-day NSE: HiRO-ACE is a scenario climatically consistent with today's climate, not a reanalysis of 2014–2023, so its dates don't correspond to real days.
+5. **Ensemble + other ICs** — needs raw HiRO-ACE output moved to Myriad. The 10-year forcing is one member (`ic0000`/m0) with no `ensemble` dim; only the 28-day smoke window ever had 4 members.
 
 ## 7. Local environment, for reference
 

@@ -1,6 +1,8 @@
 # climate-hydro-pipeline
 
-Combines two components, currently both Isambard-AI only:
+Combines two components. `hiroace/` is Isambard-AI only; `hydro/` and
+`processing/` also run on UCL Myriad (SGE) since 2026-09-18, on the `myriad`
+branch — see `environment/hydro/myriad/README.md`.
 
 - **`hiroace/`** — AI2's HiRO-ACE (ACE2S atmosphere emulator + HiRO 3km
   precipitation downscaling). Configs/scripts hardcode Isambard paths for
@@ -13,6 +15,8 @@ component per HPC site — see `environment/README.md`.
 
 Neither component's weights/data are tracked by git. `hiroace/fetch_weights.sh`
 and `hiroace/fetch_forcing_data.sh` pull them from the HF Hub into
-`hiroace/data/` (gitignored, real files — not a git-lfs-tracked path); hydro's
-`DiffHydro`/`DiffRoute`/`xtensor` deps and `results/default.pt` still need
-their own fetch/build step (not yet written).
+`hiroace/data/` (gitignored, real files — not a git-lfs-tracked path). Hydro's
+`DiffHydro`/`DiffRoute`/`xtensor` deps are cloned and installed by
+`environment/hydro/myriad/build_env.sh` (Myriad); `results/default.pt` is
+carried by hand (no fetch script) — on Myriad it lives in
+`~/Scratch/climate-hydro/checkpoints/`.

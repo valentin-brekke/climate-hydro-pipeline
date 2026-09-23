@@ -30,6 +30,10 @@ how to build them.
 
 ## Status: not yet site-portable
 
+Isambard-only, and deliberately **not** part of the 2026-09 Myriad port: enough
+HiRO-ACE simulation output already exists, so nothing here needed reinstalling
+there. Only `hydro/` and `processing/` run on Myriad.
+
 The submission scripts hardcode `BASE=/projects/u6t/vbrekke/climate-hydro-pipeline`
 (repo root) and bind-mount it whole to `/work`, so config paths like
 `/work/hiroace/data/ACE2S.ckpt` resolve correctly inside the container.

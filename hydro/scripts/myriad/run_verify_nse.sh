@@ -1,10 +1,10 @@
 #!/bin/bash -l
 #$ -N hydro_verify_nse
 #$ -l gpu=1
-#$ -ac allow=L
+#$ -ac allow=LUV
 #$ -l h_rt=1:00:00
 #$ -l mem=8G
-#$ -pe smp 8
+#$ -pe smp 4
 #$ -l tmpfs=20G
 #$ -wd /home/ucakvip/Scratch/climate-hydro/logs
 #$ -o /home/ucakvip/Scratch/climate-hydro/logs/
