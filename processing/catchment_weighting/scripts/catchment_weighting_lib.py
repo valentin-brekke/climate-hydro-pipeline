@@ -484,7 +484,7 @@ def unstack_bin_dim(da, prefix, bin_dim="bin"):
 # equally unconverted: processing/temporal_binning/docs/temporal_binning.md
 # ("target-duration normalized... true weighted mean rate over its own
 # span") confirms rebin_precip_conservative's `_4h_bin_N` output is a rate,
-# same convention as temperature's per-bin point-samples -- so, like
+# same convention as temperature's per-bin window means -- so, like
 # temperature, only its unit (kg/m2/s, SI) needs converting, not its
 # rate-vs-accumulated nature (that was the open question in that doc's
 # §5.1, now answered: rate). Real garadar_prcp_4h_bin_* is presumably mm/h
@@ -495,7 +495,7 @@ def unstack_bin_dim(da, prefix, bin_dim="bin"):
 # Deliberately converted here, not upstream in temp_downscaling/
 # temporal_binning: every operator between HiRO-ACE's raw output and this
 # assembly step is affine in the data (lapse-rate correction is affine in
-# T; point-sample interpolation, conservative-overlap rebinning, and
+# T; window-mean interpolation, conservative-overlap rebinning, and
 # catchment-area weighting are all row-stochastic weighted averages) -- a
 # scale-and-offset unit conversion commutes through the whole chain, so
 # converting here vs. upstream gives bit-comparable results. This is the

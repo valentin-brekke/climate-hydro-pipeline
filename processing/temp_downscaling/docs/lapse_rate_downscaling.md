@@ -162,7 +162,11 @@ in the loop yet — see Limitations.
 
 1. **No independent validation.** Needs comparison against real observations
    (e.g. JMA station data, or a gridded product like ERA5-Land / APHRODITE)
-   to get an actual bias/RMSE/MAE skill score.
+   to get an actual bias/RMSE/MAE skill score. A first pass against the real
+   MSM/GARADAR training forcing exists (`../../README.md`, "Still open" →
+   physical validation): sane magnitudes, but HiRO-ACE runs 12–15% drier and
+   with a flatter diurnal temperature cycle. Proper bias correction is a
+   separate side project.
 2. ~~Land–sea mask for the DEM~~ **Done (Step 2):** the high-res DEM now
    averages only land pixels per target cell instead of blending in ocean
    bathymetry and clipping afterward, so coastal cells carry a more accurate
@@ -184,10 +188,10 @@ in the loop yet — see Limitations.
    future use case needs finer sub-grid terrain detail (e.g. slope/aspect
    for orographic precipitation modeling), a 30 m product (Copernicus
    GLO-30 or JAXA AW3D30) would need to replace ETOPO 2022.
-6. **Scaling beyond a small demo window** currently relies on a Python loop
-   over timesteps; installing `dask` and moving to
-   `xr.apply_ufunc(..., dask="parallelized")` would parallelize this for a
-   full year or the global grid.
+6. ~~**Scaling beyond a small demo window**~~ **Superseded (2026-08-15):** the
+   timestep loop ran the full 10-year window on Isambard (job 6016579) with
+   streamed writes, so `dask`/`apply_ufunc` isn't needed at this scale — it
+   would only be a speed optimization.
 8. **Output stays in Kelvin all the way to `hiroace_dynamic*.zarr` -- was
    silent, now fixed at the assembly step, not here.** `to_celsius()`
    (`lapse_rate_lib.py`) is correct but was only ever called from

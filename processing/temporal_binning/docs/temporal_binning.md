@@ -55,24 +55,49 @@ Two different methods, one per variable, chosen on physical grounds confirmed ag
 published description (not inferred). Both implemented as a small fixed `(6, n_knots)` weight matrix — a
 pure function of bin/knot *geometry*, not data — applied via one matmul over the time axis.
 
-### Temperature — `rebin_temperature_linear`: point-sample, not bin-mean
+### Temperature — `rebin_temperature_linear`: the bin mean of the interpolant
 
-**Confirmed:** ACE2S outputs are **instantaneous state snapshots** at each 6-hourly timestamp (autoregressive
-step outputs), not window averages. The physically correct operation is therefore to *sample* the field at
-each target instant, not to average it over a window.
+**The target is an average, so this produces an average.** `dynamic_inp.zarr`'s
+`msm_a_temp_4h_bin_*` comes from JMA's MSM surface analysis, whose `temp` is an **hourly instantaneous**
+field on a **UTC** axis; the 4h bins are that field averaged over each window. Our job is therefore to
+estimate *the window mean* of temperature — not the temperature at some instant — from what HiRO-ACE
+provides.
 
-An earlier version of this function computed the exact **mean** of the piecewise-linear interpolant over
-each 4h bin instead. That version is wrong for a snapshot field, in a way worth being precise about: even at
-a bin whose end hour lands exactly on a native 6-hourly knot (hours 12 and 24), the bin-*mean* still isn't
-that knot's value — it's centered on the bin's *midpoint*, which pulls in a fraction of the *next* knot too.
-Concretely, for the old bin-mean weights, the bin ending at hour 12 had weights `[0, 1/3, 2/3, 0, 0]` on
-knots `[0,6,12,18,24]` — not `[0,0,1,0,0]` — silently blending in the hour-18 knot's value even though hour
-12 is a real, exactly-known snapshot.
+ACE2S provides instantaneous snapshots every 6 hours, which is why an interpolant is needed at all. So
+`interp_mean_weights` takes the exact **mean of the piecewise-linear interpolant over each 4h bin**
+(analytic, via the trapezoid rule on each sub-interval — the interpolant is linear between break points, so
+this is exact, not quadrature). On the fixed `[0,6,12,18,24]` knots that gives:
 
-The fixed version (`point_sample_weights`) instead evaluates the interpolant *at* each bin's end hour: exact
-copy of the knot's value at hours 12 and 24, linear interpolation between the two bracketing knots at hours
-4, 8, 16, 20. Verified in `temporal_binning.ipynb` against real data: every rebinned value matches the true
-interpolant value at machine precision (`~1e-9`), for all 6 bins — not just the 2 that land on native knots.
+```
+              00Z    06Z    12Z    18Z    24Z
+  bin0      0.667  0.333      0      0      0
+  bin1      0.083  0.833  0.083      0      0
+  bin2          0  0.333  0.667      0      0
+  bin3          0      0  0.667  0.333      0
+  bin4          0      0  0.083  0.833  0.083
+  bin5          0      0      0  0.333  0.667
+```
+
+Each row sums to 1 (an average, not a rescale); a constant field returns that constant, and `f(h) = h`
+returns the exact window midpoints `[2,6,10,14,18,22]`.
+
+**Why this replaced point-sampling (2026-09-23).** An earlier version sampled the interpolant *at each
+bin's end hour*, reasoning that a snapshot field should be sampled rather than averaged. That's the right
+statement about ACE2S's output but the wrong conclusion about the target: it estimates the instant at the
+window's end, roughly 2 hours later than the window's own mean. Measured against real data, that offset is
+not cosmetic — it moves the **daily maximum and minimum by a full bin**. Over the 10-year catchment-mean
+climatology, the real bins peak in bin 1 and bottom in bin 4; point-sampling peaked in bin 0 and bottomed in
+bin 3, while the bin mean reproduces bin 1 / bin 4 correctly.
+
+**Peak clipping — a limitation of the method, not a bug.** A straight line between 6-hourly knots cannot
+represent the curvature of a diurnal cycle, so both the daily maximum and minimum are cut off: the rebinned
+daily range is **~2.96 K against the real bins' ~5.34 K** (10-year catchment mean). Averaging doesn't cause
+this and can't fix it — ACE2S simply doesn't resolve sub-6-hourly structure, and a 4-point-per-day sampling
+of a smooth daily cycle loses its extremes. Anything sensitive to temperature *extremes* rather than means
+(freeze/thaw thresholds, snowmelt onset) inherits this damping, and it is a target for bias correction
+rather than for the rebinning step. A shape-aware interpolant (e.g. fitting a diurnal harmonic instead of
+straight lines) is the only way to recover some of it, and would be a modelling change, not a convention
+fix.
 
 ### Precipitation — `rebin_precip_conservative`: conservative overlap, target-duration normalized
 
@@ -144,7 +169,7 @@ Both tables verified numerically in `temporal_binning.ipynb`, and both matrices'
 | File | Purpose |
 |---|---|
 | `scripts/temporal_binning.ipynb` | Proof-of-concept notebook: weight-matrix sanity checks, real HiRO-ACE temperature rebinning with an exact-match visual/numeric check, the target- vs source-duration normalization counterexample, synthetic precipitation mass-conservation check, and an end-to-end composition check with `catchment_weighting`'s cached weights. |
-| `scripts/temporal_binning_lib.py` | The reusable functions — weight-matrix construction (`point_sample_weights` for temperature, `overlap_bin_weights` for precipitation), day-window extraction (`valid_day_starts`), the two rebin functions, and zarr-chunked streaming. |
+| `scripts/temporal_binning_lib.py` | The reusable functions — weight-matrix construction (`interp_mean_weights` for temperature, `overlap_bin_weights` for precipitation), day-window extraction (`valid_day_starts`), the two rebin functions, and zarr-chunked streaming. |
 | `scripts/run_temporal_binning.py` | Command-line script: point it at a 6-hourly zarr + variable + method (`linear`/`conservative`), get back a 4h-binned zarr. Verified bit-identical to the notebook's in-memory path, including across multiple chunk-boundary writes (which exercise the lookahead logic at chunk edges). |
 
 ## 5. Known limitations & next steps
@@ -152,7 +177,7 @@ Both tables verified numerically in `temporal_binning.ipynb`, and both matrices'
 1. ~~Units/scale of the target `_4h_bin_N` features (rate vs. accumulated mm) still unconfirmed~~
    **Answered (2026-08-13): rate, not accumulated -- no `× 4h` needed.** §3 above already establishes
    this module's own output is "the true weighted mean rate over its own span," same convention as
-   temperature's per-bin point-samples -- the only remaining gap was the unit *of* that rate: HiRO-ACE's
+   temperature's per-bin window means -- the only remaining gap was the unit *of* that rate: HiRO-ACE's
    `PRATEsfc` is SI (`kg/m2/s`), confirmed against `dynamic_inp.zarr`'s real `garadar_prcp_4h_bin_*`
    which is `mm/h` (JMA GARADAR's standard convention; no explicit `units` attr on the real file to
    confirm this against directly, which is why `assemble_dynamic_forcing`'s magnitude assertion --
@@ -161,15 +186,26 @@ Both tables verified numerically in `temporal_binning.ipynb`, and both matrices'
    see that function's docstring for why (affine operators commute through the whole chain, so it
    doesn't matter where the conversion happens, and assembly is the one place both temperature's
    equivalent K-vs-degC bug and this one get fixed together).
-2. **cftime handling.** HiRO-ACE's zarr stores decode their time axis as `cftime.DatetimeJulian` objects (a
+2. **Linear interpolation between 6h knots clips the diurnal peaks — the biggest known
+   inaccuracy in this module.** A straight line between consecutive ACE2S snapshots cannot
+   represent the curvature of a daily temperature cycle, so both the daytime maximum and the
+   pre-dawn minimum are cut off. Measured over the full 10-year run: rebinned daily range
+   **~2.96 K vs the real bins' ~5.34 K** (catchment means). The bin-mean operator (§3) is not
+   the cause — a 4-samples-per-day series simply does not contain the extremes, and no
+   reweighting of those samples can put them back. What this means downstream: daily *means*
+   are reliable, daily *extremes* are systematically damped, so anything driven by a
+   temperature threshold (freeze/thaw, snowmelt onset, rain-vs-snow partitioning) is affected
+   more than its mean-driven counterparts. Two ways out, neither a convention fix: a
+   shape-aware interpolant (fit a diurnal harmonic through the knots rather than straight
+   lines), or handle it in bias correction downstream.
+3. **cftime handling.** HiRO-ACE's zarr stores decode their time axis as `cftime.DatetimeJulian` objects (a
    Julian calendar), not numpy `datetime64` — `temporal_binning_lib` handles both, but any new source data
    should be spot-checked (`type(da['time'].values[0])`) if this starts erroring.
-3. **Fixed 6h→4h geometry.** The weight-matrix functions (`point_sample_weights`, `overlap_bin_weights`) are
+4. **Fixed 6h→4h geometry.** The weight-matrix functions (`interp_mean_weights`, `overlap_bin_weights`) are
    fully general (arbitrary knot/bin geometry), but `valid_day_starts` and the two `rebin_*` wrappers
    hardcode the 6h-native / 4h-target / 24h-day case — would need generalizing if HiRO-ACE's cadence
    changes, or if a different target binning is ever needed.
-4. **`surface_temperature` not yet covered.** The temperature method here is for `TMP2m` (screen-level air
-   temperature); `processing/temp_downscaling`'s docs note `surface_temperature` is driven by the surface
-   energy balance rather than adiabatic cooling and is out of scope for lapse-rate correction — the same
-   caveat likely applies to whether "instantaneous snapshot" point-sampling is the right rebinning choice
-   for it too; not yet checked.
+5. ~~**`surface_temperature` not yet covered.**~~ **Not needed (decided 2026-09-22)** — `TMP2m`
+   (screen-level air temperature) is what the hydro model consumes. Kept for the record: `surface_temperature`
+   is driven by the surface energy balance rather than adiabatic cooling, so it's out of scope for
+   lapse-rate correction anyway, and whether "instantaneous snapshot" point-sampling suits it was never checked.

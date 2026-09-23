@@ -11,15 +11,17 @@ temperature too.
 
 Two methods, chosen per-variable on confirmed physical grounds:
 
-- `rebin_temperature_linear` -- ACE2S outputs **instantaneous state
-  snapshots** at each 6-hourly timestamp (not window averages). So this
-  *samples* the exact linear interpolant through the 6-hourly knots at each
-  4h-bin's end hour -- an exact copy where that hour lands on a native knot,
-  linear interpolation otherwise. (An earlier version of this function
-  computed a bin *mean* instead, which is wrong for a snapshot field: it
-  silently blends in the next knot's value even at hours that land exactly
-  on a native sample. See docs/temporal_binning.md for the concrete
-  worked example.)
+- `rebin_temperature_linear` -- the target `msm_a_temp_4h_bin_*` is a 4h
+  **window average** of JMA MSM's hourly temperature field, so this takes the
+  exact *mean* of the linear interpolant over each bin. ACE2S's own output is
+  an instantaneous 6-hourly snapshot, which is why an interpolant is needed at
+  all -- but the quantity being estimated is the window mean, not an instant.
+  Sampling one instant instead (an earlier version sampled each bin's end
+  hour) leaves every bin ~2h late, which shifts the daily max/min by a whole
+  bin against the real data. **Caveat inherent to the method:** a straight
+  line between 6-hourly knots cannot represent the curvature of a diurnal
+  cycle, so peaks are clipped and the daily range comes out damped (~2.9 K vs
+  ~5.3 K in the real bins, 10yr catchment-mean). See docs/temporal_binning.md.
 - `rebin_precip_conservative` -- HiRO-ACE precipitation is a genuine 6-hour
   window-*mean* rate, end-labeled: the value at hour `t` represents the mean
   rate over `(t-6h, t]` (standard NWP/ERA5 convention for autoregressive
@@ -81,15 +83,51 @@ def _interp_weight_vector(knot_hours, t):
 def point_sample_weights(knot_hours, sample_hours):
     """(n_samples, n_knots) matrix such that `sampled_values = W @ knot_values`
     is the exact linear-interpolation point value at each sample hour --
-    exact copy of a knot's value where `sample_hours` lands on it. Used for
-    temperature: ACE2S outputs are instantaneous snapshots, so *sampling*
-    the interpolant (not averaging it) is the physically correct operation.
+    exact copy of a knot's value where `sample_hours` lands on it.
+
+    No longer used for temperature -- see `interp_mean_weights` and
+    docs/temporal_binning.md SS3 for why the bin *mean*, not a point sample, is
+    what the target variable represents. Kept as a general-purpose primitive
+    (and because `interp_mean_weights` is built from the same
+    `_interp_weight_vector`).
     """
     knot_hours = np.asarray(knot_hours, dtype=float)
     sample_hours = np.asarray(sample_hours, dtype=float)
     W = np.zeros((len(sample_hours), len(knot_hours)))
     for j, t in enumerate(sample_hours):
         W[j] = _interp_weight_vector(knot_hours, t)
+    return W
+
+
+def interp_mean_weights(knot_hours, bin_edges=BIN_EDGES_H):
+    """(n_bins, n_knots) matrix such that `bin_means = W @ knot_values` is the
+    exact **mean over each target bin** of the piecewise-linear interpolant
+    through `knot_hours`.
+
+    Used for temperature, because the target variable is an *average*, not an
+    instant: `msm_a_temp_4h_bin_N` in `dynamic_inp.zarr` comes from JMA's MSM
+    surface analysis, whose `temp` is an hourly instantaneous field, aggregated
+    to a 4h window mean (see docs/temporal_binning.md SS3). Sampling the
+    interpolant at one instant instead puts each bin ~2h out of phase with that
+    definition -- enough to move the daily max/min a whole bin (verified against
+    the real bins' own diurnal cycle; see the doc).
+
+    Exact, not quadrature: the interpolant is linear between break points, so
+    the integral over each sub-interval is the trapezoid rule, and the weight
+    vector is the duration-weighted sum of the endpoint interpolation weights.
+    """
+    knot_hours = np.asarray(knot_hours, dtype=float)
+    bin_edges = np.asarray(bin_edges, dtype=float)
+    W = np.zeros((len(bin_edges) - 1, len(knot_hours)))
+    for b, (a, c) in enumerate(zip(bin_edges[:-1], bin_edges[1:])):
+        # break points = the bin's own edges plus any knot strictly inside it
+        pts = [a] + [float(h) for h in knot_hours if a < h < c] + [c]
+        acc = np.zeros(len(knot_hours))
+        for x0, x1 in zip(pts[:-1], pts[1:]):
+            w0 = _interp_weight_vector(knot_hours, x0)
+            w1 = _interp_weight_vector(knot_hours, x1)
+            acc += (w0 + w1) / 2 * (x1 - x0)     # trapezoid: exact on a linear span
+        W[b] = acc / (c - a)
     return W
 
 
@@ -120,7 +158,7 @@ def overlap_bin_weights(source_edges, bin_edges=BIN_EDGES_H):
 # hours [0, 6, 12, 18, 24] -- that day's own 00/06/12/18 plus the *following*
 # day's 00:00 (one step of lookahead; see docs/temporal_binning.md).
 TEMP_KNOT_HOURS = np.array([0, 6, 12, 18, 24])
-TEMP_WEIGHTS    = point_sample_weights(TEMP_KNOT_HOURS, BIN_END_HOURS)   # (6, 5)
+TEMP_WEIGHTS    = interp_mean_weights(TEMP_KNOT_HOURS)   # (6, 5)
 
 # Precip windows are backward-looking and end-labeled: the value at hour h
 # represents the accumulation/rate over (h-6, h] -- so the day's own 00:00
@@ -208,15 +246,16 @@ def _rebin(da, time_dim, n_lookback, source_slicer, weights):
 
 def rebin_temperature_linear(da, time_dim="time"):
     """Rebin a 6-hourly instantaneous-snapshot temperature field onto the 6
-    four-hour daily bins by exact linear-interpolation point-sampling at
-    each bin's end hour (see `point_sample_weights`).
+    four-hour daily bins by taking the exact **mean of the linear interpolant
+    over each bin** (see `interp_mean_weights`), matching the window-average
+    definition of the real `msm_a_temp_4h_bin_*` variables.
     """
     result = _rebin(da, time_dim, n_lookback=4,
                      source_slicer=lambda values, idx: values[idx: idx + 5],
                      weights=TEMP_WEIGHTS)
-    result.attrs["rebinning"] = ("exact linear-interpolation point sample at each "
-                                  "4h bin's end hour (ACE2S outputs are instantaneous "
-                                  "snapshots, not window averages)")
+    result.attrs["rebinning"] = ("exact mean of the linear interpolant over each 4h bin "
+                                  "(matches MSM's window-average convention; note the linear "
+                                  "interpolant between 6h knots clips diurnal peaks)")
     result["bin"].attrs["long_name"] = "4h-bin end hour (local day-relative; bin covers (end-4h, end])"
     return result
 
