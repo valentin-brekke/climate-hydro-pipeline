@@ -40,6 +40,54 @@ HiRO-ACE raw grid (6-hourly, 1deg ACE2S + 3km HiRO precip)
 - [x] **NSE gap resolved (2026-09-18, Myriad):** the port pooled the std over (time, spatial), but xtensor reduces one axis at a time, so the notebook's std is the std over catchments of the per-catchment std over time. Fixed in `data.py`; `run_evaluate.py` now gives **0.9135**, and the corrected frozen stats are saved. See `hydro/pipeline/README.md` §4.3.
 - [ ] Minor unconfirmed assumptions flagged inline in `hydro/pipeline/tensors.py`/`run_predict.py`: whether `RivTree`'s `param_df` needs pre-filtering, and the `o * y_std` de-normalization — indirectly supported by `run_predict.py`'s clean, well-formed run, but not independently confirmed.
 
+### First physically meaningful coupled run (2026-09-23, Myriad jobs 2848/2854)
+
+Full 10-year HiRO-ACE trajectory (`ic0000`/m0, forcing regenerated with the corrected temperature
+binning) → `run_predict.py` → 962 gauged catchments × 3,200 days, all finite, compared against
+observed discharge **distributionally** (`hydro/scripts/myriad/compare_predicted_vs_observed.py`;
+a date-matched score is meaningless for a scenario trajectory).
+
+Medians over 952 catchments, ratio = predicted / observed:
+
+| | `--x-stats forcing` | `--x-stats frozen` | observed |
+|---|---|---|---|
+| mean flow | 1.72 | **1.20** | 17.6 m³/s |
+| median | 1.50 | 1.21 | 10.3 |
+| Q95 | 1.97 | 1.27 | 52.6 |
+| Q99 | 1.96 | 1.10 | 120.3 |
+| CV | 0.99 | 0.80 | 1.53 |
+| within ±20% on mean | 7.6% | **40.1%** | — |
+| median KS | 0.28 | 0.23 | — |
+
+**Frozen stats win on magnitude, live stats win on dispersion — and the reason is measurable.**
+HiRO-ACE's precipitation std is only **50–60%** of the training std (mean is within ~12%).
+Normalizing by the forcing's own std therefore roughly doubles every rainfall anomaly the model
+sees, inflating flow ~1.7× (CV stays right, scale doesn't). Frozen stats avoid that inflation but
+pass ACE2S's damped variability straight through, so the predicted series is under-dispersed
+(CV ratio 0.80). Neither is a bug; both are consequences of ACE2S under-representing
+precipitation variance.
+
+**The seasonal error is invariant to that choice, so it is inherited from the forcing rather than
+created by normalization.** Diagnosed in `exploration/coupled_run/notebooks/coupled_run_diagnostics.ipynb`:
+
+- **Not snowmelt mistiming.** Northern (≥37°N) catchments peak in **April in both observation and
+  prediction** — melt timing is right. The aggregate "April vs July" gap is largely northern big
+  rivers dominating an unweighted average.
+- **It is the precipitation.** HiRO-ACE rainfall peaks in **June vs July** in reality and is far too
+  dry in the late-summer rainy/typhoon season (Jul/Aug/Sep ratios **0.58/0.72/0.61**; annual 0.85).
+  Discharge follows: over-predicted May–June, under-predicted Jul–Oct.
+- **Dam-free catchments — the 318 the model was actually trained on — are reproduced best**
+  (median per-catchment ratio **1.05**, 52% within ±20%) vs **1.30** for the 644 dam-affected ones.
+  Reservoir regulation isn't represented, which is expected rather than a defect.
+
+A scale-only bias correction will not fix this; quantile mapping applied **per calendar month**
+would address the seasonal misplacement and the variance deficit together.
+
+**Analysis trap, recorded because it cost real time:** the prediction and observation netCDFs store
+catchments in *different orders*. Indexing them positionally (rather than `.sel(spatial=nodes)`)
+silently compares unrelated rivers and produced a spurious "dam-free catchments over-predicted 5×"
+result. Align by label first — `corr(log obs, log pred)` is 0.96 once aligned.
+
 ### Temperature binning convention — fixed 2026-09-23
 - [x] `rebin_temperature_linear` sampled the interpolant at each bin's **end hour**, but the real
   `msm_a_temp_4h_bin_*` is a 4h **window average** of JMA MSM's hourly temperature (UTC axis). The
