@@ -96,8 +96,9 @@ def init_dataset(g, x_dt, y_dt, runoff_statics_dt, routing_statics_df,
     g_sub = retreive_subg(g, target_nodes)
     # routing_statics_df is passed in full (not pre-filtered to g_sub's nodes)
     # -- matching exp_helpers.py's init_dataset exactly, which does the same;
-    # RivTree is presumably responsible for selecting its own graph's subset
-    # internally (unconfirmed -- see README.md).
+    # RivTree selects its own graph's subset internally (DiffRoute's
+    # init_params_from_df does param_df.loc[nodes_idx.index] -- confirmed,
+    # see README.md SS4.4).
     riv = build_riv_tree(g_sub, routing_statics_df, irf_fn=irf_fn, include_index_diag=include_index_diag)
 
     x = x_dt.sel(spatial=riv.nodes)

@@ -34,11 +34,11 @@ directly, which unconditionally does `y = y.to(device)` inside its batch
 loop. There's no pure "predict, no target" entry point in the library
 itself. This script works around that by building a same-shaped *dummy* y
 (zero-filled) purely to satisfy that interface, then discards it and keeps
-only the model's own output `o`. Mechanically this should be fine --
-`BaseDataset`'s windowing logic treats `x`/`y` symmetrically only for
-time-slicing (`o = self.run_model(ds, x)` doesn't touch `y` at all) -- but
-it is inferred from reading the windowing code, not observed to work.
-Flag this specifically if anything looks wrong on a first Isambard run.
+only the model's own output `o`. `BaseDataset`'s windowing logic treats
+`x`/`y` symmetrically only for time-slicing (`o = self.run_model(ds, x)`
+doesn't touch `y` at all). Observed working on the 28-day smoke run and the
+full 10-year coupled run (2026-09-23) -- clean, all-finite, sensible output;
+see README.md SS4 for what is and isn't yet checked.
 
 Example:
     python run_predict.py \\
