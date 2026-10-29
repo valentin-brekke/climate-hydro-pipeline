@@ -1,0 +1,47 @@
+# Experiment 1 configuration. Every setting the forcing is built with lives
+# here -- no library defaults are relied on (plan §3.8). Paths are the Mac's.
+
+paths:
+  data_root: /Users/valentin/Desktop/UNRISK/Projects/coupled_model/climate-hydro-pipeline-data
+  out_root: /Users/valentin/Desktop/UNRISK/Projects/coupled_model/climate-hydro-pipeline-data/exp1
+  obs_root: /Users/valentin/Desktop/UNRISK/Projects/hydrological_model/Japan_model/data
+  ace2s: "{data_root}/hiroace/outputs/with_temp/ace2s/output_6hourly_ace2s_{ic}.zarr"
+  hiro: "{data_root}/hiroace/outputs/with_temp/hiro/Japan_10yr_20140101_20231231_{ic}.zarr"
+  hiro_catchment_weights: "{data_root}/processing/catchment_weighting/data/hiro_grid_weights.pkl"
+  # Existing temperature chain output (lapse rate -> 4h bins -> catchments), Kelvin.
+  temp_catchments:
+    ic0000: "{data_root}/processing/catchment_weighting/data/TMP2m_catchments_ic0000_full10yr_m0_v2.zarr"
+    ic0001: "{data_root}/processing/catchment_weighting/data/TMP2m_catchments_ic0001_full10yr.zarr"
+
+members:
+  ace_runs: [ic0000, ic0001]     # each drives one HiRO store
+  hiro_samples: [0, 1, 2, 3]     # `ensemble` index inside each HiRO store
+
+time:
+  # Raw HiRO-ACE stores start at 06:00 on 2014-01-01; the 4h binning needs
+  # whole days starting at 00:00 (same window as the existing ic0000 chain).
+  ace_start: "2014-01-02"
+  ace_end: "2023-12-31"
+  obs_start: "2015-01-01"
+  obs_end: "2021-01-01"
+
+qm:
+  precip:
+    kind: "*"
+    nquantiles: 100
+    interp: linear
+    interp_space: value          # transfer function interpolated (monotone); "factor" = xsdba's way
+    extrapolation: constant
+    group: month                 # one fit per catchment x calendar month, 6 bins pooled
+    ssr_thresh_mm_h: 0.01        # final 2026-10-28, see docs/ssr_threshold.md
+    seed: 20261028
+  temp:
+    kind: "+"
+    nquantiles: 100
+    interp: linear
+    interp_space: value
+    extrapolation: constant
+    group: month                 # 6 bins pooled, like precipitation
+    ssr_thresh_mm_h: null        # no dry threshold for temperature
+    seed: null
+  ssr_candidates_mm_h: [0.001, 0.005, 0.01, 0.05, 0.1]
