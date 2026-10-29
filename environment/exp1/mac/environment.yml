@@ -1,0 +1,25 @@
+# Experiment 1 forcing-building env (Mac, CPU only). DiffHydro runs stay on
+# Myriad in environment/hydro/myriad/ -- this env never imports torch/diffhydro.
+#   micromamba create -f environment/exp1/mac/environment.yml
+name: exp1
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas>=3            # hiro_grid_weights.pkl was pickled with pandas 3
+  - xarray
+  - zarr>=3
+  - dask
+  - cftime               # ACE2S/HiRO zarrs decode to a Julian cftime axis
+  - netcdf4
+  - geopandas
+  - pyproj
+  - shapely
+  - scipy
+  - joblib
+  - tqdm
+  - pyyaml
+  - matplotlib
+  - xsdba
+  - pytest

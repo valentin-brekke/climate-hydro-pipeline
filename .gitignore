@@ -49,3 +49,6 @@ credentials.json
 .idea/
 .DS_Store
 Thumbs.db
+
+# Claude Code personal settings (per-machine, not shared)
+.claude/settings.local.json
