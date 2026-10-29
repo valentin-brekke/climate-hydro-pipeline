@@ -155,6 +155,12 @@ DYNAMIC_VAR_DICT = {
         'hiroace_prcp_4h_bin_0', 'hiroace_prcp_4h_bin_1', 'hiroace_prcp_4h_bin_2',
         'hiroace_prcp_4h_bin_3', 'hiroace_prcp_4h_bin_4', 'hiroace_prcp_4h_bin_5',
     ],
+
+    # Experiment 1 arms (experiments/exp1_hiro_vs_s1): every arm's forcing,
+    # observed or ACE-derived, under one prefix; which arm a store holds is
+    # in its attrs. Same bin convention as above.
+    'exp1_temp_4h_bin': [f'exp1_temp_4h_bin_{i}' for i in range(6)],
+    'exp1_prcp_4h_bin': [f'exp1_prcp_4h_bin_{i}' for i in range(6)],
 }
 
 STATIC_VAR_DICT = {
