@@ -291,6 +291,52 @@ def test_u1_18_real_config_parses():
 
 
 # --------------------------------------------------------------------------
+# U1.19  out-of-sample application and pooled month windows (for V2.4)
+# --------------------------------------------------------------------------
+
+def _month_matrix(da, months):
+    """(samples, catchments) of the given calendar months, other dims pooled."""
+    sel = da.isel(time=np.isin(da.time.dt.month.values, months))
+    dims = ["time"] + [d for d in sel.dims if d not in ("time", "spatial")] + ["spatial"]
+    return sel.transpose(*dims).values.reshape(-1, sel.sizes["spatial"]).astype("float64")
+
+
+def test_u1_19_sim_and_month_window_match_a_hand_built_fit(temp_case):
+    """`sim` applies the fit made on `hist` to another series, and
+    `month_window=1` fits month m on months m-1..m+1 (wrapping at the year
+    end) but corrects month m only. Both equal fit/apply by hand, exactly."""
+    ref, hist = temp_case["ref"], temp_case["hist"]
+    s = settings(kind="+", thresh=None, seed=None)
+    years = hist.time.dt.year.values
+    train, test = hist.isel(time=years % 2 == 0), hist.isel(time=years % 2 == 1)
+    oos, _ = q.qm_correct(ref, train, s, sim=test)
+    win, _ = q.qm_correct(ref, hist, s, month_window=1)
+    for m, pooled in [(1, [12, 1, 2]), (7, [6, 7, 8])]:
+        rq, hq = q.fit(_month_matrix(ref, [m]), _month_matrix(train, [m]), s)
+        np.testing.assert_array_equal(_month_matrix(oos, [m]),
+                                      q.apply(_month_matrix(test, [m]), rq, hq, s).astype("float32"))
+        rq, hq = q.fit(_month_matrix(ref, pooled), _month_matrix(hist, pooled), s)
+        np.testing.assert_array_equal(_month_matrix(win, [m]),
+                                      q.apply(_month_matrix(hist, [m]), rq, hq, s).astype("float32"))
+
+
+def test_u1_19_out_of_sample_precip_keeps_the_dry_rule(precip_case):
+    """Out of sample with SSR and a 3-month window, the output still has
+    only exact zeros or values >= thresh, nothing negative, and wet shares
+    close to the reference (looser than U1.12: a different sample)."""
+    ref, hist = precip_case["ref"], precip_case["hiro"]
+    years = hist.time.dt.year.values
+    out, _ = q.qm_correct(ref, hist.isel(time=years % 2 == 0), settings(),
+                          sim=hist.isel(time=years % 2 == 1), month_window=1)
+    v = out.values
+    assert np.all((v == 0) | (v >= THRESH))
+    for m in range(1, 13):
+        for cid in CATCHMENT_IDS:
+            wet_ref = (month_samples(ref, m, cid) >= THRESH).mean()
+            assert abs((month_samples(out, m, cid) >= THRESH).mean() - wet_ref) < 0.05
+
+
+# --------------------------------------------------------------------------
 # Figures
 # --------------------------------------------------------------------------
 

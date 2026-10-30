@@ -38,7 +38,7 @@ import xarray as xr
 
 _REQUIRED = ("kind", "nquantiles", "interp", "interp_space", "extrapolation", "group",
              "ssr_thresh_mm_h", "seed")
-_REF_STREAM, _HIST_STREAM = 0, 1
+_REF_STREAM, _HIST_STREAM, _SIM_STREAM = 0, 1, 2
 
 
 @dataclass(frozen=True)
@@ -149,60 +149,94 @@ def _jitter_columns(a, s, month, stream, ids):
                             for j, cid in enumerate(ids)])
 
 
-def qm_correct(ref, hist, s, spatial_dim="spatial", spatial_chunk=1000):
-    """Correct `hist` in-sample towards `ref`, one fit per catchment x month.
+def _fit_months(m, window):
+    """Calendar months pooled into month m's fit: m +- window, wrapping."""
+    return [(m - 1 + k) % 12 + 1 for k in range(-window, window + 1)]
+
+
+def qm_correct(ref, hist, s, sim=None, month_window=0, spatial_dim="spatial", spatial_chunk=1000):
+    """Correct `hist` towards `ref`, one fit per catchment x month.
 
     `ref`: (time, ..., spatial), e.g. observed (time, bin, spatial).
     `hist`: (time, ..., spatial), e.g. (time, bin, ensemble, spatial). Every
     non-time, non-spatial dim is pooled into the samples of a fit, so members
     share one transfer function (D6). Catchments are matched by label.
 
-    Returns (corrected DataArray shaped like `hist`, float32; per-month stats
-    DataFrame). Stats are pooled over catchments: wet shares (>= thresh) of
-    ref, hist before and after, and `created_wet`, the share of steps that
-    were dry before QM and wet after (SSR consequence 4, docs/ssr_threshold.md).
+    `sim`: what the fitted transfer functions are applied to. None (every
+    production arm, D12) corrects `hist` itself, in sample. Another series
+    (same dims as `hist`) is corrected out of sample, with its own SSR noise
+    stream; used by the split-sample check V2.4.
+    `month_window`: month m's fit pools months m-w..m+w (wrapping). 0 is D12
+    (single-month fits); V2.4 tests 1.
+
+    Returns (corrected DataArray shaped like the corrected series, float32;
+    per-month stats DataFrame). Stats are pooled over catchments: wet shares
+    (>= thresh) of ref and of the corrected series before and after, and
+    `created_wet`, the share of steps that were dry before QM and wet after
+    (SSR consequence 4, docs/ssr_threshold.md).
     """
+    target = hist if sim is None else sim
     ids = hist[spatial_dim].values
     ref = ref.sel({spatial_dim: ids})
-    hdims = ["time"] + [d for d in hist.dims if d not in ("time", spatial_dim)] + [spatial_dim]
-    rdims = ["time"] + [d for d in ref.dims if d not in ("time", spatial_dim)] + [spatial_dim]
-    hist_v = hist.transpose(*hdims).values
-    ref_v = ref.transpose(*rdims).values
+    target = target.sel({spatial_dim: ids})
+
+    def values(da):
+        dims = ["time"] + [d for d in da.dims if d not in ("time", spatial_dim)] + [spatial_dim]
+        return dims, da.transpose(*dims).values
+
+    hdims, hist_v = values(hist)
+    _, ref_v = values(ref)
+    tdims, tgt_v = values(target)
     hmonth, rmonth = hist["time"].dt.month.values, ref["time"].dt.month.values
-    out = np.full(hist_v.shape, np.nan, dtype="float32")
+    tmonth = target["time"].dt.month.values
+    out = np.full(tgt_v.shape, np.nan, dtype="float32")
     t = s.ssr_thresh
     rows = []
     for m in range(1, 13):
-        hi, ri = np.nonzero(hmonth == m)[0], np.nonzero(rmonth == m)[0]
-        if len(hi) == 0:
+        ti = np.nonzero(tmonth == m)[0]
+        if len(ti) == 0:
             continue
-        if len(ri) == 0:
-            raise ValueError(f"no reference data for month {m}")
+        months = _fit_months(m, month_window)
+        hi, ri = np.nonzero(np.isin(hmonth, months))[0], np.nonzero(np.isin(rmonth, months))[0]
+        if len(ri) == 0 or len(hi) == 0:
+            raise ValueError(f"no reference or hist data for month {m}")
         H = hist_v[hi].reshape(-1, len(ids))
         R = ref_v[ri].reshape(-1, len(ids))
-        Y = np.empty(H.shape, dtype="float64")
+        S = tgt_v[ti].reshape(-1, len(ids))
+        # In sample, the corrected rows are hist's own month-m rows (all of H
+        # when month_window is 0), with the same SSR noise as in the fit.
+        in_m = np.repeat(hmonth[hi] == m, H.shape[0] // len(hi))
+        Y = np.empty(S.shape, dtype="float64")
         for c0 in range(0, len(ids), spatial_chunk):
             sl = slice(c0, c0 + spatial_chunk)
             Hc, Rc = H[:, sl].astype("float64"), R[:, sl].astype("float64")
             if t is not None:
                 Hc = _jitter_columns(Hc, s, m, _HIST_STREAM, ids[sl])
                 Rc = _jitter_columns(Rc, s, m, _REF_STREAM, ids[sl])
+            if sim is None:
+                Sc = Hc[in_m]
+            else:
+                Sc = S[:, sl].astype("float64")
+                if t is not None:
+                    Sc = _jitter_columns(Sc, s, m, _SIM_STREAM, ids[sl])
             ref_q, hist_q = fit(Rc, Hc, s)
-            Yc = apply(Hc, ref_q, hist_q, s)
+            Yc = apply(Sc, ref_q, hist_q, s)
             if t is not None:
                 Yc[Yc < t] = 0.0
             Y[:, sl] = Yc
-        out[hi] = Y.reshape(hist_v[hi].shape)
+        out[ti] = Y.reshape(tgt_v[ti].shape)
         row = {"month": m, "n_ref_per_catchment": R.shape[0], "n_hist_per_catchment": H.shape[0]}
         if t is not None:
-            dry_before = H < t
-            row.update(ref_wet=np.nanmean(R >= t), hist_wet_before=np.nanmean(~dry_before),
-                       hist_wet_after=np.nanmean(Y >= t),
-                       created_wet=np.nanmean(dry_before & (Y >= t)))
+            # Shares among non-missing steps only.
+            ok = np.isfinite(S)
+            dry_before = S[ok] < t
+            row.update(ref_wet=(R[np.isfinite(R)] >= t).mean(), hist_wet_before=(~dry_before).mean(),
+                       hist_wet_after=(Y[ok] >= t).mean(),
+                       created_wet=(dry_before & (Y[ok] >= t)).mean())
         rows.append(row)
 
-    res = xr.DataArray(out, dims=hdims, coords={d: hist[d] for d in hdims if d in hist.coords},
-                       name=hist.name).transpose(*hist.dims)
-    res.attrs.update(hist.attrs)
-    res.attrs["bias_adjustment"] = s.describe()
+    res = xr.DataArray(out, dims=tdims, coords={d: target[d] for d in tdims if d in target.coords},
+                       name=target.name).transpose(*target.dims)
+    res.attrs.update(target.attrs)
+    res.attrs["bias_adjustment"] = s.describe() + (f" month_window={month_window}" if month_window else "")
     return res, pd.DataFrame(rows)
