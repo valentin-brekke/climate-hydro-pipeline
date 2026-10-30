@@ -1,6 +1,6 @@
 # Experiment 1 — HiRO vs standard statistical downscaling (S1) as DiffHydro forcing
 
-**Status (2026-10-28):** Phases 0 and 1 done (remap and QM code, 35 unit tests passing). Next: Phase 2.
+**Status (2026-10-29):** Phases 0–2 done. O-fine reproduces the reference skill (NSE 0.9135); O-S1 drops the median NSE to 0.764 (318 nodes) at unchanged mean flow. Open: D12 month window (V2.4). Next: Phase 3.
 
 Design, agreed decisions, phases and their unit tests and validation criteria are in
 [CLAUDE.md](CLAUDE.md), the single source for them. This file holds the layout, data locations
@@ -19,10 +19,18 @@ scripts/run_extract_precip.py      one pass per ACE run: ACE2S + HiRO, 6-hourly,
 scripts/run_check_coarse_totals.py Step 0: HiRO vs ACE2S on 1-degree cells
 scripts/run_check_dry_threshold.py Step 0: SSR threshold candidates per arm
 scripts/run_temp_chain_mac.sh      existing temperature chain, unchanged (used for ic0001)
+scripts/qm_plots.py                before/after-QM figures (tests and validation)
+scripts/assemble_lib.py            dynamic_inp-schema stores (exp1_temp/prcp_4h_bin_0..5)
+scripts/run_build_obs_arms.py      Phase 2: O-fine and O-S1 -> out_root/forcing/
+scripts/run_validate_o_s1.py       Phase 2 V2.3: O-S1 against observations -> out_root/validation/
+scripts/run_qm_sensitivity.py      Phase 2 V2.4: QM settings, split sample
+scripts/run_score_obs_arms.py      Phase 2 V2.1/V2.2 (Myriad, hydro env): NSE, predict vs evaluate
+myriad/smoke_gpu.sh               SGE: GPU + env + paths check
+myriad/run_predict_obs_arms.sh    SGE: run_predict on O-fine/O-S1, then the scoring
 tests/conftest.py                  synthetic precipitation/temperature cases, plot folder, cache dirs
 tests/test_stat_downscale.py       Phase 1a unit tests
 tests/test_qm.py                   Phase 1b unit tests + figures (out_root/test_plots/)
-tests/qm_plots.py                  before/after-QM figures
+tests/test_assemble.py             Phase 2 unit tests (U2.1, U2.2)
 docs/ssr_threshold.md              why 0.01 mm/h, and what it entails
 ```
 

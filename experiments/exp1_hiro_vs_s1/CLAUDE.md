@@ -91,6 +91,7 @@ Report the median over nodes, and R only where `d_O` is clearly larger than its 
 | D14 | Evaluation nodes: headline on all 962 gauged nodes, checked on the 318 dam-free ones. |
 | D15 | Use the record as-is: about 5 years of output for O arms, about 9 per A member after the 365-day warm-up. |
 | D16 | *Decided 2026-10-29:* A-HiRO-raw keeps HiRO's small negative precipitation unchanged (no clipping), as in the 2026-09-23 coupled run. They are 0.16% of the positive volume and normalise to about zero. |
+| D17 | *Decided 2026-10-29:* the D2 temperature-QM reference is the observed MSM temperature as stored, including six 4h steps where every catchment reads −50 to −76 °C (2019-04-13 24h; 2020-02-21 20h, 02-25 20h, 02-26 12h, 03-15 20h, 03-18 12h). They are in the data the model was trained on; nothing is masked. |
 
 ## Phases
 
@@ -151,28 +152,67 @@ Figures (written by the tests): `qm_precip_s1.png`, `qm_precip_hiro.png`, `qm_te
 and `qm_vs_xsdba.png`. They show distributions, QQ at the nodes and wet shares before/after QM,
 plus the `xsdba` agreement.
 
-Still to add in Phase 2: a check on real data that counts "dry before, wet after" steps per arm and
-month (`qm_correct` already returns `created_wet`; see `docs/ssr_threshold.md` point 4).
+### Phase 2: Group O forcing and runs (done 2026-10-29, Myriad job 19751)
 
-### Phase 2: Group O forcing and runs
+Forcing is built on the Mac by `run_build_obs_arms.py` into `out_root/forcing/{o_fine,o_s1}.zarr`
+with `assemble_lib.py`: variables `exp1_temp_4h_bin_0..5` (°C) and `exp1_prcp_4h_bin_0..5` (mm/h),
+dims (time, spatial), float32, zarr format 3. `hydro/pipeline/data.py` has the keys
+`exp1_temp_4h_bin` and `exp1_prcp_4h_bin`. The stores are copied to Myriad
+`~/Scratch/climate-hydro/exp1/forcing/` through the `~/myriad` mount (about 1 MB/s).
+`myriad/run_predict_obs_arms.sh` runs `run_predict.py` (frozen stats, 962 gauged nodes; O-fine also
+on the 318) and then `run_score_obs_arms.py`. The scored window is 2016-01-01 → 2020-12-04 (1,800
+days), the same as `run_evaluate.py`. The observed precipitation's last day (2021-01-01) is missing
+for every catchment; it stays missing in O-S1.
 
-Deliverables: an assembly step writing `dynamic_inp`-schema zarrs (`<prefix>_prcp_4h_bin_0..5`,
-`<prefix>_temp_4h_bin_0..5`, dims (time, spatial), float32, °C and mm/h) for O-fine and O-S1, plus an
-SGE script running `run_predict.py` for each arm.
-- U2.1 Assembly round-trips: variable names, dims, dtype, units, and bin order (bin label 4(i+1) ↔ `_4h_bin_i`).
-- U2.2 O-fine passed through the assembly equals `dynamic_inp.zarr` exactly.
-- V2.1 `run_predict.py` (dummy `y`) and `run_evaluate.py` give the same output on observed forcing
-  (max relative diff < 1e-5). This item has been open since Sept 2026.
-- V2.2 O-fine NSE against observed discharge: median 0.9135 ± 1e-3 on the 318 nodes; the median on
-  the 962 nodes is reported (expected lower, because there are no reservoirs).
-- V2.3 O-S1 after QM: monthly marginals of each catchment match observations (U1.11 on real data).
-  Rank correlation between catchments in the same cell ≈ 1.
-- V2.4 QM settings sensitivity (forcing only, no DiffHydro runs), on O-S1 with a split sample (fit on
-  odd years, evaluate on even years, and the reverse): nquantiles 50 / 100 / 200, and a ±1-month
-  pooling window against single-month fits. Score: out-of-sample relative error of the wet-node
-  quantiles (median and 95th percentile over catchment × month) and of the monthly wet share. Keep D7
-  if 100 quantiles, single month, is within the spread of the best setting; otherwise report and ask
-  before changing anything.
+Unit tests (all passing, 42 in total):
+- U1.19 (added to `qm_lib` for V2.4) `qm_correct(sim=...)` applies a fit to another series, and
+  `month_window=1` fits month m on m−1..m+1 but corrects month m only; both equal a hand-built fit exactly.
+- U2.1 Assembly round-trips: variable names, dims, dtype, units, int64 IDs, and bin order (bin label
+  4(i+1) ↔ `_4h_bin_i`); temperature is aligned by catchment ID; cftime time axes are rejected; the
+  names match `data.expand_dynamic_keys` position for position against the trained keys.
+- U2.2 O-fine passed through the assembly equals `dynamic_inp.zarr` exactly (300 catchments in the
+  test; all of them are asserted in `run_build_obs_arms.py`).
+
+Validation:
+- V2.1 `run_predict.py` (dummy `y`) on O-fine reproduces `run_evaluate.py`'s prediction on the 318
+  nodes: max over nodes of max|a − b| / mean|b| < 1e-5. **Passed: 7.0e-6** (open since Sept 2026).
+  - Finding: a node's prediction depends on the target set. In the 962-node run, the 223 of the 318
+    nodes that have another 962 gauge downstream differ from the 318-node run (median 2.6e-5, 28%
+    above 1e-4, worst 8.3%, at a headwater whose routing graph then continues 17 catchments
+    downstream). The other 95 differ by at most 8.7e-6. This is DiffRoute's behaviour (a node routed
+    as the graph's outlet vs as an interior node), not exp1's. **Rule: every arm is predicted on the
+    same 962 target set, and the 318-node numbers are taken from that same run.**
+- V2.2 NSE against observed discharge over 2016-01-01 → 2020-12-04 (`v2_2_nse_obs_arms.csv`).
+  **Passed:** O-fine median 0.9135 on the 318 nodes (317 with data) from the 962-node run.
+
+  | Median NSE | O-fine | O-S1 |
+  |---|---|---|
+  | 318 dam-free | 0.9135 | 0.7643 |
+  | all 962 (959 with data) | 0.8286 | 0.6643 |
+
+  O-S1 is worse than O-fine at 98% (318) and 94% (962) of nodes, with a median drop of 0.13 and 0.12.
+  The mean flow is unchanged (O-S1 / O-fine median 1.004 and 1.009), as QM should leave it.
+- V2.3 O-S1 against observations, per catchment × month (`run_validate_o_s1.py`). *Criteria adapted
+  2026-10-29:* GARADAR values are discrete (e.g. many steps of exactly 0.05 mm/h), so the reference
+  quantile function is a staircase that interpolation between nodes cannot follow, and the synthetic
+  worst-case limits of U1.11 don't apply. Required instead: median wet-node difference < 1e-3, fewer
+  than 1% of wet nodes above 2%, wet output monotone in the S1 input. **Passed:**
+  - wet nodes: median difference 4.1e-4; 0.26% of nodes above 2% (worst 12.7%, at a 0.05 → 0.10 mm/h step);
+  - mapping: 0 monotonicity violations; wet share within 1/nq + 1/n everywhere; no value below the
+    threshold other than 0, and none negative;
+  - "dry before, wet after": 0.08% of steps, 99.9% of them in the 1% of catchment-months where S1 is
+    drier than observed;
+  - within-cell Spearman correlation (7,396 catchments wholly inside one cell): S1 before QM 1.000,
+    O-S1 0.955 (each catchment zeroes a different share of steps), O-fine 0.760.
+- V2.4 QM settings, split sample on O-S1 (`run_qm_sensitivity.py`: fit on odd years, score on even,
+  and the reverse). **Done. Decided 2026-10-29: D7 and D12 unchanged (100 quantiles, one fit per calendar month).**
+  - Number of quantiles barely matters: 50, 100 and 200 are within 1% on the wet-node quantiles and
+    the wet share. Only the 99th percentile of the worst 5% of catchment-months gets worse with more
+    quantiles (0.51 / 0.54 / 0.57 relative error), since the top nodes then rest on a handful of values.
+  - Pooling ±1 month is 10–17% better on every score (wet-node quantiles 0.182 → 0.154, 99th
+    percentile 0.153 → 0.132, wet share 0.018 → 0.016).
+  - Caveat: each fit here uses 3 years of observations; production fits use all 6, and every arm
+    shares the same reference.
 
 ### Phase 3: Group A forcing and runs
 
