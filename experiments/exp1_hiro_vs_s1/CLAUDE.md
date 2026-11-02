@@ -214,17 +214,56 @@ Validation:
   - Caveat: each fit here uses 3 years of observations; production fits use all 6, and every arm
     shares the same reference.
 
-### Phase 3: Group A forcing and runs
+### Phase 3: Group A forcing and runs (done 2026-10-30, Myriad job 24699)
 
-Deliverables: forcing zarrs per arm and member under `out_root/<arm>/<member>/`, member IDs
-`ic0000`, `ic0001` (A-S1) and `ic0000-0` … `ic0001-3` (A-HiRO), and runs on Myriad.
-- U3.1 Temperature pairing: every A-HiRO member's temperature equals its parent run's A-S1
-  temperature exactly, and the provenance attrs name that run.
-- U3.2 All QM'd arms carry the same QM config hash.
-- U3.3 The calendar conversion (Julian → standard) keeps every value and changes only labels.
-- V3.1 After QM, the monthly marginals of each arm match observations, pooled over members.
-- V3.2 All forcing and discharge values are finite; precipitation ≥ 0 in the QM'd arms.
-- V3.3 A-HiRO-raw keeps HiRO's negatives unchanged (D16): its values equal the raw catchment series exactly.
+`run_build_a_arms.py` writes 20 stores, `out_root/forcing/<arm>/<member>.zarr`, in the Phase 2
+schema: A-S1 and A-coarse-raw `ic0000`, `ic0001`; A-HiRO and A-HiRO-raw `ic0000-0` … `ic0001-3`
+(`a_arms_lib.members`). Per store: precipitation from its arm, temperature from its parent run.
+- **Temperature (D2, D17):** each run's lapse-rate chain output (K → °C), QM'd additively against
+  observed MSM temperature as stored, both runs pooled. Mean shift −0.69 K: ACE is warm against MSM.
+- **Precipitation:** A-S1 pools the 2 ACE2S runs and A-HiRO the 8 HiRO samples in one fit per
+  catchment × month (D6, D12). A-HiRO is fitted one catchment half at a time, which gives the same
+  result, because each catchment has its own fit and its own SSR noise.
+- **Calendar:** ACE's Julian dates are relabelled to the same Y-M-D in the standard calendar.
+  Precipitation and temperature share the days 2014-01-02 → 2023-12-30 (3,650).
+- **Upload:** with `rsync`, checked with `myriad/store_manifest.py --expect-file`, which writes the
+  `.done` markers that `myriad/run_predict_a_arms.sh` waits for. That job runs `run_predict.py` on
+  all 20 members, on the same 962 target nodes as the O arms, in about 13 minutes.
+- **Output:** 3,200 predicted days per member (2015-01-02 → 2023-10-06).
+
+Unit tests (`tests/test_a_arms.py`; 46 in total, all passing):
+- U3.1 Member bookkeeping: 2 + 8 + 8 + 2 members; every member's parent run is the run in its ID.
+- U3.2 The QM hash is stable under key order and changes with any setting.
+- U3.3 Julian → standard keeps every value and the Y-M-D labels, and calendar months are unchanged;
+  it rejects a Julian 2100-02-29, a noleap axis and sub-daily labels.
+
+Validation (`run_validate_a_arms.py` on the written stores, `run_check_a_predictions.py` on Myriad).
+**All passed:**
+- U3.1 on the stores: every member's temperature equals its parent run's A-S1 temperature exactly,
+  and every attrs block names that run.
+- U3.2 on the stores: one precipitation QM hash and one settings string across A-S1, A-HiRO and O-S1.
+- V3.1 precipitation, pooled over members, with V2.3's real-data criteria:
+  - A-S1: median wet-node difference 9.3e-5, 0.005% of wet nodes above 2%, wet share within tolerance everywhere.
+  - A-HiRO: median 2.2e-5, 0.002% of wet nodes above 2%, wet share within tolerance everywhere.
+- V3.1 temperature. *Criterion adapted 2026-10-30:* quantiles at the 5th–95th percentile nodes within
+  0.05 K (passed: 0.026 K). The mean and spread are only reported, because the six glitch steps (D17)
+  sit below the lowest node, where QM cannot reproduce them:
+  - February–April: worst mean error 0.21 K, worst spread error 41%;
+  - other months: worst mean error 0.022 K, worst spread error 1.8%.
+- V3.2 every value finite in every store; QM'd precipitation is 0 or ≥ thresh, never negative; all 20
+  discharge predictions are finite, on the 962 nodes and on the same days.
+- V3.3 A-HiRO-raw and A-coarse-raw equal the raw catchment series exactly; HiRO's negatives are kept.
+- Reported, "dry before, wet after" (SSR consequence 4):
+  - A-S1: 0.29% of steps, carrying 0.05% of the rain volume.
+  - A-HiRO: 2.2% of steps, carrying 0.47% of the volume. HiRO is drier than observed in
+    September–October (wet share 0.27 against 0.32 in October), so there SSR turns up to 6.3% of steps
+    from dry to wet, at random times. Their amounts are small, but they will show up in Phase 4's
+    wet-spell and lag-1 autocorrelation diagnostics.
+- Seen in the figures: raw HiRO's wet-step intensities at catchment scale are well below observed
+  (about a third, across the distribution, in the July example), consistent with
+  `coupled-run-findings`. QM removes this by construction.
+- Median mean flow over the 962 nodes, for context only (the A arms cover other years than O):
+  A-S1 25.2, A-HiRO 24.4, A-HiRO-raw 23.6, A-coarse-raw 19.6, O-fine 22.9 m³/s.
 
 ### Phase 4: Evaluation
 

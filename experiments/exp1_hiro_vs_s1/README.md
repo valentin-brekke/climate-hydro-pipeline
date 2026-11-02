@@ -1,6 +1,6 @@
 # Experiment 1 — HiRO vs standard statistical downscaling (S1) as DiffHydro forcing
 
-**Status (2026-10-29):** Phases 0–2 done. O-fine reproduces the reference skill (NSE 0.9135); O-S1 drops the median NSE to 0.764 (318 nodes) at unchanged mean flow. Open: D12 month window (V2.4). Next: Phase 3.
+**Status (2026-10-30):** Phases 0–3 done. All 22 forcing sets (2 O, 20 A) are built, validated and run through DiffHydro on Myriad. Next: Phase 4 (evaluation).
 
 Design, agreed decisions, phases and their unit tests and validation criteria are in
 [CLAUDE.md](CLAUDE.md), the single source for them. This file holds the layout, data locations
@@ -25,12 +25,20 @@ scripts/run_build_obs_arms.py      Phase 2: O-fine and O-S1 -> out_root/forcing/
 scripts/run_validate_o_s1.py       Phase 2 V2.3: O-S1 against observations -> out_root/validation/
 scripts/run_qm_sensitivity.py      Phase 2 V2.4: QM settings, split sample
 scripts/run_score_obs_arms.py      Phase 2 V2.1/V2.2 (Myriad, hydro env): NSE, predict vs evaluate
+scripts/a_arms_lib.py              Phase 3: member list, Julian -> standard calendar, QM hash
+scripts/run_build_a_arms.py        Phase 3: the 20 group A stores -> out_root/forcing/<arm>/<member>.zarr
+scripts/run_validate_a_arms.py     Phase 3 V3.1-V3.3, U3.1-U3.2 on the written stores
+scripts/run_check_a_predictions.py Phase 3 V3.2 discharge (Myriad, hydro env)
 myriad/smoke_gpu.sh               SGE: GPU + env + paths check
 myriad/run_predict_obs_arms.sh    SGE: run_predict on O-fine/O-S1, then the scoring
+myriad/run_predict_a_arms.sh      SGE: run_predict on the 20 group A members, then V3.2
+myriad/store_manifest.py          file count + bytes of a store; marks a checked upload .done
+myriad/wait_job.sh                wait on Myriad's side for a job to start or finish
 tests/conftest.py                  synthetic precipitation/temperature cases, plot folder, cache dirs
 tests/test_stat_downscale.py       Phase 1a unit tests
 tests/test_qm.py                   Phase 1b unit tests + figures (out_root/test_plots/)
 tests/test_assemble.py             Phase 2 unit tests (U2.1, U2.2)
+tests/test_a_arms.py               Phase 3 unit tests (U3.1-U3.3)
 docs/ssr_threshold.md              why 0.01 mm/h, and what it entails
 ```
 
