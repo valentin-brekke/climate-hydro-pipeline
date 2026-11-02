@@ -53,19 +53,39 @@ def obs_s1_linear(cfg, obs=None):
     return out.transpose(*obs.dims).rename("o_s1_linear")
 
 
-def load_raw_precip(cfg, ic, source, member=None):
+def load_raw_precip(cfg, ic, source, member=None, spatial=None):
     """ACE2S (`source="ace2s"`) or HiRO (`"hiro"`) catchment precipitation
     from run_extract_precip.py, rebinned 6h -> 4h and converted to mm/h.
     Time axis stays the native Julian cftime axis.
 
     `member` selects one HiRO sample (int); None keeps the ensemble dim.
+    `spatial`: optional positional slice of catchments (memory: one HiRO
+    run is ~3 GB in full).
     """
     path = ec.out_path(cfg, "raw", ic, f"{source}_precip_6h.zarr")
     da = xr.open_zarr(path, consolidated=False)["catchments"]
     if member is not None:
         da = da.sel(ensemble=member)
+    if spatial is not None:
+        da = da.isel(spatial=spatial)
     da = da.sel(time=slice(cfg["time"]["ace_start"], cfg["time"]["ace_end"])).load()
     out = rebin_precip_conservative(da) * KG_M2_S_TO_MM_H
     out.attrs = {"units": "mm/h", "source": str(path)}
     dims = ["time", "bin"] + (["ensemble"] if "ensemble" in out.dims else []) + ["spatial"]
     return out.transpose(*dims).astype("float32").rename(f"{source}_{ic}")
+
+
+KELVIN_OFFSET = 273.15
+
+
+def load_ace_temp(cfg, ic):
+    """2 m temperature of one ACE run from the existing chain (lapse rate ->
+    4h bins -> catchments), (time, bin, spatial) in degC, native Julian
+    cftime axis (2014-01-02 .. 2023-12-30, as the rebinned precipitation)."""
+    path = cfg["paths"]["temp_catchments"][ic]
+    da = xr.open_zarr(path, consolidated=None)["TMP2m"].rename(catchment_id="spatial")
+    if da.attrs.get("units") != "K":
+        raise ValueError(f"{path}: expected Kelvin, got {da.attrs.get('units')!r}")
+    out = (da.transpose("time", "bin", "spatial").load() - KELVIN_OFFSET).astype("float32")
+    out.attrs = {"units": "degC", "source": str(path)}
+    return out.rename(f"temp_{ic}")
