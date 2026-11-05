@@ -45,3 +45,10 @@ qm:
     ssr_thresh_mm_h: null        # no dry threshold for temperature
     seed: null
   ssr_candidates_mm_h: [0.001, 0.005, 0.01, 0.05, 0.1]
+
+eval:
+  # Phase 4 (eval_lib.py holds the statistic definitions)
+  n_boot: 200                    # block bootstrap over whole calendar years
+  seed: 20261102
+  a_years: [2015, 2022]          # whole years of the A predictions (2023 is partial)
+  ci_percent: [2.5, 97.5]
