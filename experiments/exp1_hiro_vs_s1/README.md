@@ -1,6 +1,6 @@
 # Experiment 1 — HiRO vs standard statistical downscaling (S1) as DiffHydro forcing
 
-**Status (2026-10-30):** Phases 0–3 done. All 22 forcing sets (2 O, 20 A) are built, validated and run through DiffHydro on Myriad. Next: Phase 4 (evaluation).
+**Status (2026-11-02):** Phases 0–4 done. S1 raises high flows and flood peaks by about 5% under observed weather and by a similar amount relative to HiRO under ACE weather; HiRO reproduces the observed sub-cell rain structure. Figures in `out_root/eval/`. Next: Phase 5 decision.
 
 Design, agreed decisions, phases and their unit tests and validation criteria are in
 [CLAUDE.md](CLAUDE.md), the single source for them. This file holds the layout, data locations
@@ -29,6 +29,10 @@ scripts/a_arms_lib.py              Phase 3: member list, Julian -> standard cale
 scripts/run_build_a_arms.py        Phase 3: the 20 group A stores -> out_root/forcing/<arm>/<member>.zarr
 scripts/run_validate_a_arms.py     Phase 3 V3.1-V3.3, U3.1-U3.2 on the written stores
 scripts/run_check_a_predictions.py Phase 3 V3.2 discharge (Myriad, hydro env)
+scripts/eval_lib.py                Phase 4: discharge statistics, year bootstrap, d_O/d_A/R
+scripts/eval_plots.py              Phase 4 figures (one style per arm)
+scripts/run_evaluate_exp1.py       Phase 4: discharge evaluation -> out_root/eval/v4_*
+scripts/run_forcing_diagnostics.py Phase 4: rain structure -> out_root/eval/v4_forcing_*
 myriad/smoke_gpu.sh               SGE: GPU + env + paths check
 myriad/run_predict_obs_arms.sh    SGE: run_predict on O-fine/O-S1, then the scoring
 myriad/run_predict_a_arms.sh      SGE: run_predict on the 20 group A members, then V3.2
@@ -39,6 +43,7 @@ tests/test_stat_downscale.py       Phase 1a unit tests
 tests/test_qm.py                   Phase 1b unit tests + figures (out_root/test_plots/)
 tests/test_assemble.py             Phase 2 unit tests (U2.1, U2.2)
 tests/test_a_arms.py               Phase 3 unit tests (U3.1-U3.3)
+tests/test_eval.py                 Phase 4 unit tests (U4.1-U4.4)
 docs/ssr_threshold.md              why 0.01 mm/h, and what it entails
 ```
 

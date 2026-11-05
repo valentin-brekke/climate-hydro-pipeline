@@ -265,24 +265,83 @@ Validation (`run_validate_a_arms.py` on the written stores, `run_check_a_predict
 - Median mean flow over the 962 nodes, for context only (the A arms cover other years than O):
   A-S1 25.2, A-HiRO 24.4, A-HiRO-raw 23.6, A-coarse-raw 19.6, O-fine 22.9 m³/s.
 
-### Phase 4: Evaluation
+### Phase 4: Evaluation (done 2026-11-02; Phase 5 decision open)
 
-Forcing diagnostics:
-- inter-catchment correlation against distance, split into pairs inside one cell and across cells;
-- high quantiles (99th, 99.9th) of basin-mean precipitation against basin area;
-- lag-1 (4h) autocorrelation and wet-spell lengths.
+Scripts: `eval_lib.py` (statistics, bootstrap, d/R), `run_evaluate_exp1.py` (discharge),
+`run_forcing_diagnostics.py` (rain structure), `eval_plots.py` (one fixed style per arm). Settings are
+in `config.yaml` `eval`. Predictions are copied from Myriad to `out_root/predictions/` with `rsync`;
+outputs go to `out_root/eval/v4_*` (CSV and PNG).
 
-Discharge statistics: mean flow (control), Q90 and Q99 of the flow-duration curve, peaks over a
-threshold set for 2–3 events/yr in O-fine (median and 90th percentile of peaks), time to peak and
-duration above threshold. Group O also gets per-event peak error and KGE of O-S1 against O-fine.
-No return levels beyond about 10 years. Uncertainty comes from the spread across HiRO samples, the
-spread across ACE runs, and a block bootstrap by year; a HiRO-vs-S1 difference counts only if it is
-larger than that spread.
-- U4.1 Each statistic has a known answer on a synthetic series (FDC quantiles, POT count and
-  threshold, peak timing).
-- U4.2 `d_O`, `d_A` and R on synthetic inputs; R is reported as missing where `d_O` is within its uncertainty.
-- U4.3 The block bootstrap resamples whole years.
-- U4.4 Reordering catchments in one input leaves every result unchanged (guards the label-alignment trap).
+**Definitions** (fixed 2026-11-02, in `eval_lib.py`), on daily discharge at the 962 nodes:
+- Windows: O arms 2016-01-01 → 2020-12-04; A arms the whole years 2015–2022 (2023 is partial).
+  Members are pooled per arm.
+- Flows: mean flow (the control); q90 and q99 are the 90th and 99th percentiles of daily flow
+  (high flows, non-exceedance).
+- Floods: one threshold per node, set on O-fine to give 2.5 events a year and used for every arm.
+  An event is a run above the threshold; runs less than 7 days apart merge. Per node: events per
+  year, the median and 90th-percentile peak, the mean days above the threshold, and the mean rise
+  time (days from the lowest flow in the 10 days before the peak). Means, not medians, for the last
+  two: at daily resolution the medians are whole days and almost never differ.
+- Uncertainty: a paired bootstrap of whole calendar years, 200 draws. The O arms share draws, and
+  the A arms share theirs. A difference counts when its 95% interval excludes 0; R is reported only
+  where d_O counts.
+- Group O extras: KGE of O-S1 against O-fine, and O-S1's peak within ±2 days of each O-fine flood.
+
+Unit tests (`tests/test_eval.py`, 7; 53 in total, all passing):
+- U4.1 Known answers on synthetic floods: event count, peaks, peak days, duration, rise time,
+  merging of close runs, the threshold hitting 2.5 floods a year, flow quantiles, and KGE.
+- U4.2 d_O, d_A, R and relative d; R is missing where d_O's interval contains 0.
+- U4.3 The bootstrap draws whole years with replacement, reproducibly, and per-year blocks give the
+  exact weighted means.
+- U4.4 Permuting the nodes permutes the results and nothing else.
+
+**Results, discharge** (`v4_summary.csv`; medians over the 962 nodes; d relative to the fine-scale arm):
+
+| statistic | d_O (O-S1 − O-fine) | d_A (A-S1 − A-HiRO) | nodes with d_O significant | R, median (IQR) on those | R, 318 nodes | median d_A / median d_O |
+|---|---|---|---|---|---|---|
+| mean flow | +0.9% | +2.7% | 14% | 0.89 (0.25–1.68) | 0.27 | (2.9) |
+| q90 | +0.2% | +2.3% | 6% | 0.37 | 0.00 | — |
+| q99 | +5.7% | +8.0% | 10% | 0.72 (0.41–1.15) | 0.59 | 1.41 |
+| floods per year | 0% | +7.6% | 8% | 0.27 | 0.21 | — |
+| median flood peak | +4.5% | +4.3% | 10% | 0.18 (−0.12–0.58) | 0.06 | 0.95 |
+| 90th pct flood peak | +5.3% | +6.0% | 12% | 0.22 (−0.13–0.57) | −0.03 | 1.14 |
+| days above threshold | +5.1% | +5.3% | 17% | 0.27 | 0.21 | 1.04 |
+| rise time | +1.2% | −2.4% | 16% | 0.01 | 0.00 | — |
+
+- **Group O:** O-S1 against O-fine has median KGE 0.90 (0.89 on the 318 nodes). The median flood-peak
+  error is −1% overall, but it depends on basin size: about −7% under 100 km² and +6% above 2,000 km².
+  The q99 change likewise grows from +2% to +9% with area. Peak timing is unchanged at daily resolution.
+- **Reading R.** S1 raises high flows and flood peaks by about 5% under observed weather, and by
+  about the same amount relative to HiRO under ACE weather. Across all nodes, median d_A / median d_O
+  is 0.95–1.4 for q99, peaks and duration, so HiRO behaves like observed fine-scale rain in what S1
+  takes away. Per node, R is lower and widely spread (0.2–0.7). But d_O is significant at only 6–17%
+  of nodes (5 observed years), and keeping only those nodes biases R towards 0: their d_O is partly
+  inflated by chance. d_A is significant much more often (9–55%) thanks to the longer A record.
+- **Against O-fine** (`v4_arm_ratios.png`; different years, a climatological comparison):
+  - A-HiRO: q99 +14%, floods per year +15%; A-S1: +24% and +23%.
+  - Raw HiRO's floods are too small (90th-percentile peak −17%).
+  - Raw ACE2S is too dry overall: mean −13%, floods per year −36%.
+  - So QM fixes the volume, but even the HiRO arm overshoots high flows. That points to ACE's
+    too-persistent rain (below), which QM can't correct.
+
+**Results, rain structure** (`v4_forcing_summary.csv`, medians over catchments or basins):
+
+| arm | correlation inside one cell | basin q99.9 / O-fine, > 2,000 km² | lag-1 (4h) | mean wet spell |
+|---|---|---|---|---|
+| O-fine | 0.72 | 1.00 | 0.51 | 15.3 h |
+| O-S1 | 0.98 | 1.11 | 0.60 | 17.0 h |
+| A-S1 | 0.98 | 1.11 | 0.76 | 21.1 h |
+| A-HiRO | 0.76 | 1.01 | 0.69 | 15.9 h |
+| A-HiRO-raw | 0.79 | 0.80 | 0.71 | 19.9 h |
+| A-coarse-raw | 1.00 | 0.72 | 0.77 | 30.6 h |
+
+HiRO reproduces the observed sub-cell decorrelation, large-basin rain extremes and wet-spell
+length; S1 doesn't. Every ACE-based arm is too persistent from one 4h step to the next. This is ACE's
+own timing, which neither downscaling changes.
+
+Figures: `v4_headline.png`, `v4_dA_vs_dO.png`, `v4_R_vs_area.png`, `v4_arm_ratios.png`,
+`v4_group_o.png`, `v4_fdc_examples.png`, `v4_forcing_corr_distance.png`,
+`v4_forcing_basin_extremes.png`, `v4_forcing_persistence.png`.
 
 ### Phase 5: Decision point
 
@@ -295,7 +354,7 @@ larger than that spread.
 
 ## Open
 
-Nothing open.
+- **Phase 5:** which row of the decision table applies (see Phase 4 results); for the user.
 
 ## Out of scope
 
