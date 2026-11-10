@@ -1,0 +1,52 @@
+# Showcase figures (HiRO-ACE -> DiffHydro coupling). Paths are the Mac's.
+# Data comes from experiment 1 (experiments/exp1_hiro_vs_s1/config.yaml); figures
+# and cached extracts go to out_root, outside the repo.
+
+exp1_config: ../experiments/exp1_hiro_vs_s1/config.yaml
+out_root: /Users/valentin/Desktop/UNRISK/Projects/coupled_model/climate-hydro-pipeline-data/showcase
+predictions_all_nodes: /Users/valentin/Desktop/UNRISK/Projects/coupled_model/climate-hydro-pipeline-data/showcase/predictions_all_nodes   # rsync of ~/Scratch/climate-hydro/showcase/predictions_all_nodes
+
+region:
+  name: Kyushu
+  # catchments whose centroid lies in this box, minus the Shikoku tip (lon > 131.9 and lat > 33.2)
+  lat: [30.9, 34.0]
+  lon: [129.4, 132.1]
+  map_extent: [129.05, 132.4, 30.7, 34.5]    # lon_min, lon_max, lat_min, lat_max (HiRO's domain starts at 129.0E)
+
+# Map extents the figures can be drawn on (--region); kyushu = region.map_extent above.
+maps:
+  kyushu: {extent: [129.05, 132.4, 30.7, 34.5], simplify_deg: 0.0}
+  japan:                                     # HiRO's whole domain
+    extent: [129.0, 146.0, 30.0, 45.8]
+    simplify_deg: 0.01
+    # Own event (2026-11-05, prep_event.py --region japan + quicklook_events.py japan): a typhoon
+    # south of Shikoku (ACE2S wind up to 27 m/s) whose rain band runs along all of Honshu;
+    # 115 mm Japan-wide over 3 days, > 100 mm in half the catchments.
+    event:
+      chosen: {run: ic0000, sample: 3, around: "2016-10-24", label: "Typhoon, October 2016 (HiRO-ACE run ic0000, sample 3)"}
+      week: ["2016-10-20", "2016-10-26"]
+      discharge_days: ["2016-10-20", "2016-10-30"]
+
+event:
+  months: [8, 9, 10]                         # typhoon season (June-July heavy rain is the Baiu front)
+  window_days: 3                             # rain accumulation used to rank events (prep_event.py)
+  # Chosen 2026-11-05 from prep_event.py + quicklook_events.py: a typhoon passing just south of
+  # Kyushu (closed ACE2S circulation, 10 m wind up to 28 m/s), up to ~400 mm on the southeast coast.
+  chosen: {run: ic0000, sample: 2, around: "2021-10-07", label: "Typhoon, October 2021 (HiRO-ACE run ic0000, sample 2)"}
+  week: ["2021-10-04", "2021-10-10"]         # figure 1: 6-hourly rain frames over these days (inclusive)
+  discharge_days: ["2021-10-04", "2021-10-14"]   # figure 2: daily discharge (rivers respond later)
+
+clim:
+  years: [2015, 2022]                        # whole years of the A-HiRO predictions (2023 is partial)
+
+hydro:                                       # figure 5, gauge hydrographs
+  min_upa_km2: 200
+  days:
+    japan: ["2016-10-18", "2016-11-03"]
+    kyushu: ["2021-10-02", "2021-10-16"]
+  # figure 5: three gauges. A downstream gauge on a large river and an upstream gauge on the
+  # same river (routing), plus one separate basin. User, 2026-11-05.
+  downstream_min_upa_km2: 2000
+  pair_area_fraction: [0.1, 0.5]             # upstream gauge's area / downstream gauge's area
+  pair_area: {lon: [130.0, 139.0], lat: [31.0, 37.0]}      # where the river pair may be (the 2016 rain band)
+  separate_area: {lon: [139.0, 142.0], lat: [37.5, 41.5]}  # Tohoku
